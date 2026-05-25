@@ -33,11 +33,12 @@ contract Deploy is Script {
 
     function run() external {
         // ── Load config from environment ──────────────────────────────────
-        uint256 deployerKey     = vm.envUint("DEPLOYER_PRIVATE_KEY");
-        address admin           = vm.envAddress("ADMIN_ADDRESS");
-        address agentSigner     = vm.envAddress("AGENT_SIGNER_ADDRESS");
-        address feeRecipient    = vm.envAddress("FEE_RECIPIENT_ADDRESS");
-        uint256 feeBps          = vm.envUint("FEE_BPS");
+        // Private key is passed via --private-key CLI flag, not env var.
+        // Only addresses and fee config are read from environment.
+        address admin        = vm.envAddress("ADMIN_ADDRESS");
+        address agentSigner  = vm.envAddress("AGENT_SIGNER_ADDRESS");
+        address feeRecipient = vm.envAddress("FEE_RECIPIENT_ADDRESS");
+        uint256 feeBps       = vm.envUint("FEE_BPS");
 
         // ── Sanity checks before spending gas ────────────────────────────
         require(admin        != address(0), "Deploy: ADMIN_ADDRESS not set");
@@ -45,12 +46,9 @@ contract Deploy is Script {
         require(feeRecipient != address(0), "Deploy: FEE_RECIPIENT_ADDRESS not set");
         require(feeBps       <= 500,        "Deploy: FEE_BPS exceeds 500 (5%)");
 
-        address deployer = vm.addr(deployerKey);
-
         console.log("===========================================");
         console.log(" CronStream Deployment");
         console.log("===========================================");
-        console.log(" Deployer:      ", deployer);
         console.log(" Admin:         ", admin);
         console.log(" Agent signer:  ", agentSigner);
         console.log(" Fee recipient: ", feeRecipient);
@@ -58,8 +56,8 @@ contract Deploy is Script {
         console.log(" Chain ID:      ", block.chainid);
         console.log("===========================================");
 
-        // ── Deploy ────────────────────────────────────────────────────────
-        vm.startBroadcast(deployerKey);
+        // ── Deploy — key comes from --private-key CLI flag ────────────────
+        vm.startBroadcast();
 
         CronStreamRouter router = new CronStreamRouter(
             agentSigner,

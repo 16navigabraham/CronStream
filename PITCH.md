@@ -82,18 +82,38 @@ Stream window extends → contractor keeps earning per second
 
 ---
 
+## Robinhood Chain — A New Compensation Primitive
+
+Robinhood Chain natively issues **tokenized Stock Tokens** — AAPL, TSLA, GOOGL — as ERC-20s.
+
+CronStream streams **any ERC-20**.
+
+Put them together:
+
+> *A startup streams 2 AAPL tokens per day to a contractor as they ship code. Real-time. Milestone-gated. No cliff. No options paperwork. If they stop delivering, the company cancels the stream and gets the unearned stock back instantly.*
+
+This is a brand new compensation model that only exists on Robinhood Chain:
+- **For contractors** — accumulate tokenized equity exposure as you build, per second
+- **For companies** — offer stock-like compensation to contractors without traditional equity complexity
+- **For the ecosystem** — real utility for Stock Tokens beyond trading
+
+No other streaming protocol is doing this.
+
+---
+
 ## Built For This Hackathon
 
-- ✅ Deployed on **Robinhood Chain** (Arbitrum Orbit) — reserved prize slot
+- ✅ Deployed on **Robinhood Chain** (Arbitrum Orbit) — reserved prize slot + Stock Token streaming
 - ✅ Deployed on **Arbitrum Sepolia** — standard testing ground
 - ✅ Qualifies for **Overall** and **Agentic** tracks simultaneously
 - ✅ Autonomous agent with zero human intervention in the loop
+- ✅ Streams any ERC-20 — USDC, USDT, or tokenized stocks
 
 ---
 
 ## One Line
 
-> *"Sablier streams money while the clock ticks. CronStream streams money while the work ships."*
+> *"Sablier streams money while the clock ticks. CronStream streams money while the work ships — in any token, including stocks."*
 
 ---
 
