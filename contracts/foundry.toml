@@ -7,4 +7,16 @@ remappings = [
     "forge-std/=lib/forge-std/src/",
 ]
 
+# ─── RPC endpoints ────────────────────────────────────────────────────────────
+[rpc_endpoints]
+arbitrum_sepolia = "https://sepolia-rollup.arbitrum.io/rpc"
+arbitrum_one     = "https://arb1.arbitrum.io/rpc"
+# Robinhood Chain — update once the public RPC is released at the June 2 workshop
+robinhood        = "${ROBINHOOD_RPC_URL}"
+
+# ─── Etherscan / block explorer verification ──────────────────────────────────
+[etherscan]
+arbitrum_sepolia = { key = "${ETHERSCAN_API_KEY}", url = "https://api-sepolia.arbiscan.io/api" }
+arbitrum_one     = { key = "${ETHERSCAN_API_KEY}", url = "https://api.arbiscan.io/api" }
+
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
