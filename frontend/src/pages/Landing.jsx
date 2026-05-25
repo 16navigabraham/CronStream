@@ -1,50 +1,173 @@
 import { useNavigate } from 'react-router-dom';
 import { useAccount } from 'wagmi';
+import { useConnectModal } from '@rainbow-me/rainbowkit';
+import { useEffect } from 'react';
+import { useProfile } from '../hooks/useProfile';
+import StreamBackground from '../components/StreamBackground';
+import FlowDiagram from '../components/FlowDiagram';
+
+// ─── Feature SVG icons ────────────────────────────────────────────────────────
+const IconStream = () => (
+  <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full">
+    <defs>
+      <linearGradient id="sg1" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse">
+        <stop stopColor="#00D4AA" stopOpacity="0.25"/>
+        <stop offset="1" stopColor="#00D4AA" stopOpacity="0.05"/>
+      </linearGradient>
+    </defs>
+    <rect width="48" height="48" rx="14" fill="url(#sg1)"/>
+    {/* flowing line */}
+    <path d="M8 24 Q16 16 24 24 Q32 32 40 24" stroke="#00D4AA" strokeWidth="2.5" strokeLinecap="round" fill="none"/>
+    {/* gate / checkpoint */}
+    <rect x="21" y="19" width="6" height="10" rx="3" fill="#00D4AA" opacity="0.9"/>
+    {/* dots on the line */}
+    <circle cx="10" cy="24" r="2.5" fill="#00D4AA" opacity="0.5"/>
+    <circle cx="38" cy="24" r="2.5" fill="#00D4AA" opacity="0.5"/>
+    {/* lock symbol inside gate */}
+    <path d="M23 22.5 v-1.5 a1 1 0 0 1 2 0 v1.5" stroke="#0A0A0F" strokeWidth="1.2" strokeLinecap="round"/>
+  </svg>
+);
+
+const IconAgent = () => (
+  <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full">
+    <defs>
+      <linearGradient id="ag1" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse">
+        <stop stopColor="#818CF8" stopOpacity="0.25"/>
+        <stop offset="1" stopColor="#818CF8" stopOpacity="0.05"/>
+      </linearGradient>
+    </defs>
+    <rect width="48" height="48" rx="14" fill="url(#ag1)"/>
+    {/* head */}
+    <rect x="14" y="13" width="20" height="16" rx="5" stroke="#818CF8" strokeWidth="2" fill="none"/>
+    {/* eyes */}
+    <circle cx="20" cy="21" r="2.5" fill="#818CF8"/>
+    <circle cx="28" cy="21" r="2.5" fill="#818CF8"/>
+    {/* antenna */}
+    <line x1="24" y1="13" x2="24" y2="9" stroke="#818CF8" strokeWidth="2" strokeLinecap="round"/>
+    <circle cx="24" cy="8" r="1.5" fill="#818CF8"/>
+    {/* body / check */}
+    <path d="M18 32 h12 M20 36 h8" stroke="#818CF8" strokeWidth="2" strokeLinecap="round" opacity="0.5"/>
+    {/* verify tick */}
+    <path d="M18 29 l3 3 l6 -5" stroke="#00D4AA" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+  </svg>
+);
+
+const IconToken = () => (
+  <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full">
+    <defs>
+      <linearGradient id="tg1" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse">
+        <stop stopColor="#F59E0B" stopOpacity="0.25"/>
+        <stop offset="1" stopColor="#F59E0B" stopOpacity="0.05"/>
+      </linearGradient>
+    </defs>
+    <rect width="48" height="48" rx="14" fill="url(#tg1)"/>
+    {/* back coin */}
+    <ellipse cx="27" cy="27" rx="9" ry="9" fill="#F59E0B" opacity="0.25" stroke="#F59E0B" strokeWidth="1.5"/>
+    {/* front coin */}
+    <ellipse cx="21" cy="22" rx="9" ry="9" fill="#0A0A0F" stroke="#F59E0B" strokeWidth="2"/>
+    {/* dollar / $ symbol */}
+    <text x="21" y="26" textAnchor="middle" fill="#F59E0B" fontSize="10" fontWeight="700" fontFamily="monospace">$</text>
+    {/* sparkle */}
+    <path d="M35 13 l1 2 l2 1 l-2 1 l-1 2 l-1-2 l-2-1 l2-1z" fill="#F59E0B" opacity="0.7"/>
+  </svg>
+);
+
+const IconClock = () => (
+  <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full">
+    <defs>
+      <linearGradient id="cg1" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse">
+        <stop stopColor="#00D4AA" stopOpacity="0.2"/>
+        <stop offset="1" stopColor="#00D4AA" stopOpacity="0.04"/>
+      </linearGradient>
+    </defs>
+    <rect width="48" height="48" rx="14" fill="url(#cg1)"/>
+    {/* clock face */}
+    <circle cx="24" cy="24" r="13" stroke="#00D4AA" strokeWidth="2" fill="none"/>
+    {/* tick marks */}
+    {[0,90,180,270].map(deg => {
+      const r = deg * Math.PI / 180;
+      return <line key={deg} x1={24 + 10*Math.sin(r)} y1={24 - 10*Math.cos(r)} x2={24 + 12*Math.sin(r)} y2={24 - 12*Math.cos(r)} stroke="#00D4AA" strokeWidth="1.5" strokeLinecap="round" opacity="0.5"/>;
+    })}
+    {/* minute hand */}
+    <line x1="24" y1="24" x2="24" y2="13" stroke="#00D4AA" strokeWidth="2" strokeLinecap="round"/>
+    {/* hour hand */}
+    <line x1="24" y1="24" x2="31" y2="27" stroke="#00D4AA" strokeWidth="2.5" strokeLinecap="round"/>
+    {/* center dot */}
+    <circle cx="24" cy="24" r="2" fill="#00D4AA"/>
+    {/* per-second label */}
+    <text x="24" y="43" textAnchor="middle" fill="#00D4AA" fontSize="5.5" fontFamily="monospace" opacity="0.7">/sec</text>
+  </svg>
+);
+
+const IconShield = () => (
+  <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full">
+    <defs>
+      <linearGradient id="shg1" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse">
+        <stop stopColor="#34D399" stopOpacity="0.2"/>
+        <stop offset="1" stopColor="#34D399" stopOpacity="0.04"/>
+      </linearGradient>
+    </defs>
+    <rect width="48" height="48" rx="14" fill="url(#shg1)"/>
+    {/* shield */}
+    <path d="M24 10 L36 15 V25 C36 32 24 38 24 38 C24 38 12 32 12 25 V15 Z" stroke="#34D399" strokeWidth="2" fill="none"/>
+    {/* return arrow inside */}
+    <path d="M20 24 h6 a3 3 0 0 0 0-6 h-3" stroke="#34D399" strokeWidth="2" strokeLinecap="round" fill="none"/>
+    <path d="M19 21 l-2 3 l2 3" stroke="#34D399" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+  </svg>
+);
+
+const IconKey = () => (
+  <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full">
+    <defs>
+      <linearGradient id="kg1" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse">
+        <stop stopColor="#A78BFA" stopOpacity="0.25"/>
+        <stop offset="1" stopColor="#A78BFA" stopOpacity="0.05"/>
+      </linearGradient>
+    </defs>
+    <rect width="48" height="48" rx="14" fill="url(#kg1)"/>
+    {/* key ring */}
+    <circle cx="20" cy="20" r="8" stroke="#A78BFA" strokeWidth="2" fill="none"/>
+    <circle cx="20" cy="20" r="3.5" fill="#A78BFA" opacity="0.4"/>
+    {/* key shaft */}
+    <line x1="26" y1="26" x2="38" y2="38" stroke="#A78BFA" strokeWidth="2.5" strokeLinecap="round"/>
+    {/* teeth */}
+    <line x1="32" y1="32" x2="34" y2="30" stroke="#A78BFA" strokeWidth="2" strokeLinecap="round"/>
+    <line x1="35" y1="35" x2="37" y2="33" stroke="#A78BFA" strokeWidth="2" strokeLinecap="round"/>
+    {/* EIP label */}
+    <text x="20" y="20.5" textAnchor="middle" dominantBaseline="middle" fill="#A78BFA" fontSize="5" fontFamily="monospace" fontWeight="700">712</text>
+  </svg>
+);
 
 const FEATURES = [
-  {
-    icon: '⬡',
-    title: 'Milestone-Gated Streams',
-    desc: 'Money flows only while work is being verified. No merged PR, no passing CI — the stream freezes automatically.',
-  },
-  {
-    icon: '◎',
-    title: 'Autonomous Agent',
-    desc: 'An off-chain agent verifies GitHub contributions in 3 layers and extends the stream window — no human in the loop.',
-  },
-  {
-    icon: '↗',
-    title: 'Any ERC-20 Token',
-    desc: 'Stream USDC, USDT, or tokenized stocks like TSLA and AAPL. Native support for Robinhood Chain Stock Tokens.',
-  },
-  {
-    icon: '⌛',
-    title: 'Per-Second Precision',
-    desc: 'Contractors earn per second. Balance accrues in real time. Withdraw anytime within the earned window.',
-  },
-  {
-    icon: '↩',
-    title: 'Full Budget Recovery',
-    desc: 'Cancel a stream early and reclaim every unearned token instantly. No disputes, no delays.',
-  },
-  {
-    icon: '⚿',
-    title: 'EIP-712 Cryptographic Proof',
-    desc: 'Every stream extension is backed by a signed on-chain voucher. Fully auditable, fully trustless.',
-  },
+  { Icon: IconStream, title: 'Milestone-Gated Streams',   desc: 'Money flows only while work is being verified. No merged PR, no passing CI. The stream freezes automatically.' },
+  { Icon: IconAgent,  title: 'Autonomous Agent',          desc: 'An off-chain agent verifies work across GitHub, Jira, Bitbucket, and Figma in 3 layers with no human in the loop.' },
+  { Icon: IconToken,  title: 'Any ERC-20 Token',          desc: 'Stream USDC, USDT, or tokenized stocks like TSLA and AAPL. Native support for Robinhood Chain Stock Tokens.' },
+  { Icon: IconClock,  title: 'Per-Second Precision',      desc: 'Contractors earn per second. Balance accrues in real time. Withdraw anytime within the earned window.' },
+  { Icon: IconShield, title: 'Full Budget Recovery',      desc: 'Cancel a stream early and reclaim every unearned token instantly. No disputes, no delays.' },
+  { Icon: IconKey,    title: 'EIP-712 Cryptographic Proof', desc: 'Every stream extension is backed by a signed on-chain voucher. Fully auditable, fully trustless.' },
 ];
 
-const STEPS = [
-  { step: '01', title: 'Company creates stream', desc: 'Deposit full budget upfront. Set rate per second and duration.' },
-  { step: '02', title: 'Contractor ships code', desc: 'Push commits, open PR, pass CI. Work is verifiable on GitHub.' },
-  { step: '03', title: 'Agent verifies milestone', desc: '3-layer check: code diff + merged PR + CI pass. All must pass.' },
-  { step: '04', title: 'Stream window extends', desc: 'Agent signs EIP-712 voucher, submits on-chain. Contractor earns another window.' },
-  { step: '05', title: 'Contractor withdraws', desc: 'Pull earned tokens anytime. Protocol fee deducted automatically.' },
-];
 
 export default function Landing() {
-  const navigate = useNavigate();
-  const { isConnected } = useAccount();
+  const navigate          = useNavigate();
+  const { address, isConnected } = useAccount();
+  const { openConnectModal } = useConnectModal();
+  const { hasProfile }    = useProfile(address);
+
+  // Once wallet connects, skip /connect and go straight to the right page
+  useEffect(() => {
+    if (isConnected) {
+      navigate(hasProfile ? '/app/dashboard' : '/app/setup', { replace: true });
+    }
+  }, [isConnected, hasProfile, navigate]);
+
+  function handleLaunch() {
+    if (isConnected) {
+      navigate(hasProfile ? '/app/dashboard' : '/app/setup');
+    } else {
+      openConnectModal?.();
+    }
+  }
 
   return (
     <div className="min-h-screen bg-dark text-white overflow-x-hidden">
@@ -52,14 +175,14 @@ export default function Landing() {
       {/* Nav */}
       <nav className="fixed top-0 left-0 right-0 z-50 border-b border-border bg-dark/80 backdrop-blur-md">
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
-          <span className="font-mono font-semibold text-accent text-lg tracking-tight">CronStream</span>
+          <div className="flex items-center gap-2">
+            <img src="/logo.png" alt="CronStream" className="w-7 h-7 rounded-md object-contain" />
+            <span className="font-mono font-semibold text-accent text-lg tracking-tight">CronStream</span>
+          </div>
           <div className="flex items-center gap-4">
             <a href="#how-it-works" className="btn-ghost text-sm hidden sm:block">How it works</a>
             <a href="#features"     className="btn-ghost text-sm hidden sm:block">Features</a>
-            <button
-              className="btn-primary text-sm py-2 px-5"
-              onClick={() => navigate(isConnected ? '/app/dashboard' : '/connect')}
-            >
+            <button className="btn-primary text-sm py-2 px-5" onClick={handleLaunch}>
               {isConnected ? 'Dashboard' : 'Launch App'}
             </button>
           </div>
@@ -67,27 +190,33 @@ export default function Landing() {
       </nav>
 
       {/* Hero */}
-      <section className="relative pt-28 sm:pt-32 pb-16 sm:pb-24 px-4 sm:px-6 grid-bg">
-        <div className="absolute inset-0 bg-gradient-to-b from-accent/5 via-transparent to-transparent pointer-events-none" />
+      <section className="relative pt-28 sm:pt-32 pb-16 sm:pb-24 px-4 sm:px-6 grid-bg overflow-hidden">
+        {/* Animated stream background */}
+        <StreamBackground />
+        {/* Gradient fade — keeps text readable over the animation */}
+        <div className="absolute inset-0 bg-gradient-to-b from-dark/60 via-dark/20 to-dark/80 pointer-events-none" />
         <div className="max-w-4xl mx-auto text-center relative">
-          <div className="inline-flex items-center border border-accent/30 bg-accent/5 text-accent text-xs font-mono px-4 py-1.5 rounded-full mb-8">
-            Deployed on Arbitrum & Robinhood Chain
+          <div className="inline-flex items-center gap-2 border border-accent/30 bg-accent/5 text-accent text-xs font-mono px-4 py-1.5 rounded-full mb-8">
+            <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
+            Live on Arbitrum · Robinhood Chain
           </div>
-          <h1 className="text-4xl sm:text-6xl lg:text-7xl font-bold tracking-tight leading-[1.05] mb-6">
-            Stream money
+          <h1 className="text-4xl sm:text-6xl lg:text-7xl font-bold tracking-tight leading-[1.08] mb-6">
+            Programmable payroll
             <br />
-            <span className="text-accent">while work ships.</span>
+            <span className="text-accent">for business.</span>
           </h1>
-          <p className="text-muted text-lg sm:text-xl max-w-2xl mx-auto mb-10 leading-relaxed">
-            The first autonomous, milestone-gated B2B token streaming protocol.
-            Contractors earn per second. Companies keep control.
+          <p className="text-muted text-lg sm:text-xl max-w-2xl mx-auto mb-4 leading-relaxed">
+            CronStream replaces invoice cycles and manual approvals with
+            continuous, milestone-verified payment streams. Companies maintain
+            full budget control. Contractors get paid as work ships.
+          </p>
+          <p className="text-muted/60 text-sm max-w-xl mx-auto mb-10 leading-relaxed">
+            Verified against GitHub, Jira, Bitbucket, and Figma.
+            No middleman. No disputes. No 30-day net terms.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <button
-              className="btn-primary text-base py-3.5 px-8"
-              onClick={() => navigate(isConnected ? '/app/dashboard' : '/connect')}
-            >
-              {isConnected ? 'Go to Dashboard' : 'Get Started'}
+            <button className="btn-primary text-base py-3.5 px-8" onClick={handleLaunch}>
+              {isConnected ? 'Go to Dashboard' : 'Start streaming'}
             </button>
             <a
               href="https://github.com/16navigabraham/CronStream"
@@ -105,10 +234,10 @@ export default function Landing() {
       <section className="border-y border-border bg-surface">
         <div className="max-w-6xl mx-auto px-6 py-8 grid grid-cols-2 sm:grid-cols-4 gap-8 text-center">
           {[
-            { val: '0x3feb...549f', label: 'Contract Address' },
-            { val: '2',            label: 'Chains Deployed' },
-            { val: '0.5%',         label: 'Protocol Fee' },
-            { val: '67',           label: 'Tests Passing' },
+            { val: 'Arbitrum Sepolia',  label: 'Chain 1' },
+            { val: 'Robinhood Chain',   label: 'Chain 2' },
+            { val: '4 Sources',         label: 'GitHub · Jira · Bitbucket · Figma' },
+            { val: '0.5%',              label: 'Protocol Fee' },
           ].map(({ val, label }) => (
             <div key={label}>
               <div className="font-mono text-xl font-semibold text-white">{val}</div>
@@ -120,40 +249,63 @@ export default function Landing() {
 
       {/* How it works */}
       <section id="how-it-works" className="py-24 px-6">
-        <div className="max-w-4xl mx-auto">
-          <h2 className="text-3xl font-bold text-center mb-3">How it works</h2>
-          <p className="text-muted text-center mb-16">Five steps. Zero trust required.</p>
-          <div className="relative">
-            {/* Vertical line */}
-            <div className="absolute left-8 top-0 bottom-0 w-px bg-border hidden sm:block" />
-            <div className="flex flex-col gap-10">
-              {STEPS.map(({ step, title, desc }) => (
-                <div key={step} className="flex gap-6 items-start">
-                  <div className="shrink-0 w-16 h-16 rounded-full border border-accent/30 bg-accent/5 flex items-center justify-center z-10">
-                    <span className="font-mono text-accent text-sm font-semibold">{step}</span>
-                  </div>
-                  <div className="pt-3">
-                    <h3 className="font-semibold text-white mb-1">{title}</h3>
-                    <p className="text-muted text-sm leading-relaxed">{desc}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+        <FlowDiagram />
       </section>
 
       {/* Features */}
       <section id="features" className="py-24 px-6 bg-surface border-y border-border">
         <div className="max-w-6xl mx-auto">
-          <h2 className="text-3xl font-bold text-center mb-3">Built different</h2>
-          <p className="text-muted text-center mb-16">Not another time-based streamer.</p>
+          <div className="text-center mb-16">
+            <p className="text-xs font-mono text-accent uppercase tracking-[0.2em] mb-4">
+              Why CronStream
+            </p>
+            <h2 className="text-4xl sm:text-5xl font-bold tracking-tight mb-4">
+              Built{' '}
+              <span className="relative inline-block">
+                different
+                <span className="absolute -bottom-1 left-0 right-0 h-px bg-gradient-to-r from-transparent via-accent to-transparent" />
+              </span>
+            </h2>
+            <p className="text-muted text-base max-w-sm mx-auto leading-relaxed">
+              Not another time-based streamer.
+              Every dollar is tied to verified output.
+            </p>
+          </div>
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {FEATURES.map(({ icon, title, desc }) => (
-              <div key={title} className="card hover:border-accent/30 transition-colors duration-200">
-                <div className="text-accent text-2xl mb-4 font-mono">{icon}</div>
-                <h3 className="font-semibold text-white mb-2">{title}</h3>
-                <p className="text-muted text-sm leading-relaxed">{desc}</p>
+            {FEATURES.map(({ Icon, title, desc }, i) => (
+              <div key={title}
+                className="group relative rounded-3xl border border-border bg-dark
+                  overflow-hidden hover:border-accent/30 transition-all duration-300
+                  hover:shadow-[0_0_40px_-12px_rgba(0,212,170,0.15)]"
+              >
+                {/* Top accent bar */}
+                <div className="h-px w-full bg-gradient-to-r from-transparent via-accent/30 to-transparent" />
+
+                {/* Page content */}
+                <div className="px-7 pt-7 pb-8">
+                  {/* Chapter marker row */}
+                  <div className="flex items-center justify-between mb-6">
+                    <div className="w-11 h-11">
+                      <Icon />
+                    </div>
+                    <span className="text-[10px] font-mono text-muted/40 tracking-widest">
+                      {String(i + 1).padStart(2, '0')}
+                    </span>
+                  </div>
+
+                  {/* Divider line — like a doc rule */}
+                  <div className="h-px bg-border mb-5" />
+
+                  <h3 className="font-semibold text-white text-base mb-3 leading-snug">{title}</h3>
+                  <p className="text-muted text-sm leading-relaxed">{desc}</p>
+                </div>
+
+                {/* Bottom page-fold corner detail */}
+                <div className="absolute bottom-0 right-0 w-8 h-8 overflow-hidden pointer-events-none">
+                  <div className="absolute bottom-0 right-0 w-8 h-8
+                    border-t border-l border-border rounded-tl-xl bg-surface
+                    group-hover:border-accent/20 transition-colors" />
+                </div>
               </div>
             ))}
           </div>
@@ -162,29 +314,61 @@ export default function Landing() {
 
       {/* Robinhood Chain callout */}
       <section className="py-24 px-6">
-        <div className="max-w-3xl mx-auto text-center">
-          <div className="card border-accent/20 bg-accent/5">
-            <div className="text-4xl mb-4">📈</div>
-            <h2 className="text-2xl font-bold mb-3">Stream tokenized stocks</h2>
-            <p className="text-muted leading-relaxed mb-6">
-              On Robinhood Chain, CronStream can stream TSLA, AMZN, NFLX, AMD, and PLTR
-              directly to contractors as they ship. Real-time stock compensation —
-              no options paperwork, no cliff vesting.
-            </p>
-            <span className="badge-active">Native to Robinhood Chain</span>
+        <div className="max-w-5xl mx-auto">
+          <div className="border border-border rounded-2xl overflow-hidden">
+            {/* Header */}
+            <div className="border-b border-border px-8 py-6 flex items-center justify-between gap-4 flex-wrap">
+              <div>
+                <div className="text-xs font-mono text-accent uppercase tracking-widest mb-1">Robinhood Chain</div>
+                <h2 className="text-2xl font-bold">Compensate teams with real assets</h2>
+              </div>
+              <span className="text-xs font-mono border border-accent/30 bg-accent/5 text-accent px-3 py-1.5 rounded-full shrink-0">
+                Native integration
+              </span>
+            </div>
+
+            {/* Body */}
+            <div className="grid sm:grid-cols-2 gap-0 divide-y sm:divide-y-0 sm:divide-x divide-border">
+              {/* Left — copy */}
+              <div className="px-8 py-8">
+                <p className="text-muted leading-relaxed mb-6">
+                  On Robinhood Chain, CronStream streams tokenized equities directly to
+                  contractors as milestones are verified. Replace cliff vesting schedules and
+                  options paperwork with real-time, work-gated stock compensation.
+                </p>
+                <p className="text-muted leading-relaxed">
+                  Payment pauses automatically if work stops. No disputes, no manual
+                  processing, no 30-day settlement windows.
+                </p>
+              </div>
+
+              {/* Right — token grid */}
+              <div className="px-8 py-8">
+                <div className="text-xs font-mono text-muted uppercase tracking-widest mb-4">Supported stock tokens</div>
+                <div className="grid grid-cols-3 gap-3">
+                  {['TSLA', 'AMZN', 'NFLX', 'AMD', 'PLTR', 'AAPL'].map(ticker => (
+                    <div key={ticker}
+                      className="border border-border rounded-xl px-3 py-2.5 text-center bg-surface hover:border-accent/30 transition-colors">
+                      <div className="font-mono font-semibold text-sm text-white">{ticker}</div>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-xs text-muted mt-4">
+                  Any ERC-20 token on Robinhood Chain is supported. Listed tickers are available today.
+                </p>
+              </div>
+            </div>
           </div>
         </div>
       </section>
 
       {/* CTA */}
-      <section className="py-24 px-6 border-t border-border grid-bg">
+      <section className="relative py-24 px-6 border-t border-border grid-bg overflow-hidden">
+        <StreamBackground />
         <div className="max-w-xl mx-auto text-center">
           <h2 className="text-3xl font-bold mb-4">Ready to stream?</h2>
-          <p className="text-muted mb-8">Connect your wallet and set up your profile in under a minute.</p>
-          <button
-            className="btn-primary text-base py-3.5 px-10"
-            onClick={() => navigate(isConnected ? '/app/dashboard' : '/connect')}
-          >
+          <p className="text-muted mb-8">Programmable payroll for business. Set up in under a minute.</p>
+          <button className="btn-primary text-base py-3.5 px-10" onClick={handleLaunch}>
             {isConnected ? 'Go to Dashboard' : 'Connect Wallet'}
           </button>
         </div>
@@ -193,13 +377,16 @@ export default function Landing() {
       {/* Footer */}
       <footer className="border-t border-border py-8 px-6">
         <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
-          <span className="font-mono text-accent font-semibold">CronStream</span>
-          <span className="text-muted text-xs font-mono">
-            0x3feb14d164EaA05a85e0276321E4F090a03549f9
-          </span>
-          <div className="flex gap-6 text-muted text-sm">
+          <div className="flex items-center gap-2">
+            <img src="/logo.png" alt="CronStream" className="w-6 h-6 rounded-md object-contain" />
+            <span className="font-mono text-accent font-semibold">CronStream</span>
+          </div>
+          <span className="text-muted text-xs">Programmable payroll for business</span>
+          <div className="flex gap-6 text-muted text-sm flex-wrap justify-center sm:justify-end">
             <a href="https://github.com/16navigabraham/CronStream" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">GitHub</a>
             <a href="https://sepolia.arbiscan.io/address/0x3feb14d164EaA05a85e0276321E4F090a03549f9" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">Arbiscan</a>
+            <button onClick={() => navigate('/privacy')} className="hover:text-white transition-colors">Privacy</button>
+            <button onClick={() => navigate('/terms')}   className="hover:text-white transition-colors">Terms</button>
           </div>
         </div>
       </footer>

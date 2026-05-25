@@ -20,6 +20,23 @@ import { publicProfile } from './encryption.js';
 
 const app = express();
 
+// ─── CORS ─────────────────────────────────────────────────────────────────────
+// Allow the frontend (any origin in dev; specific origin in prod via CORS_ORIGIN)
+app.use((req, res, next) => {
+  const origin = process.env.CORS_ORIGIN ?? '*';
+  res.setHeader('Access-Control-Allow-Origin',  origin);
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
+// ─── Request logging ──────────────────────────────────────────────────────────
+app.use((req, _res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
+  next();
+});
+
 // ─── Body Parsing ────────────────────────────────────────────────────────────
 // Store the raw buffer so the webhook route can verify the GitHub HMAC signature
 // against the original request bytes.

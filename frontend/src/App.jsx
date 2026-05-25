@@ -2,7 +2,8 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAccount } from 'wagmi';
 
 import Landing      from './pages/Landing';
-import Connect      from './pages/Connect';
+import Privacy      from './pages/Privacy';
+import Terms        from './pages/Terms';
 import Setup        from './pages/app/Setup';
 import Dashboard    from './pages/app/Dashboard';
 import StreamDetail from './pages/app/StreamDetail';
@@ -12,7 +13,7 @@ import AppShell     from './components/AppShell';
 
 function ProtectedRoute({ children }) {
   const { isConnected } = useAccount();
-  if (!isConnected) return <Navigate to="/connect" replace />;
+  if (!isConnected) return <Navigate to="/" replace />;
   return children;
 }
 
@@ -21,7 +22,8 @@ export default function App() {
     <Routes>
       {/* Public */}
       <Route path="/"        element={<Landing />} />
-      <Route path="/connect" element={<Connect />} />
+      <Route path="/privacy" element={<Privacy />} />
+      <Route path="/terms"   element={<Terms />} />
 
       {/* App — wallet required */}
       <Route path="/app" element={
