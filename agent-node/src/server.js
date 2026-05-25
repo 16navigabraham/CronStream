@@ -15,7 +15,7 @@ import crypto  from 'crypto';
 import { verifyMilestone, VerificationError } from './verifyMilestone.js';
 import { signExtensionVoucher, getSignerAddress } from './agentSigner.js';
 import { submitExtension, getAllBalances }                    from './chainSubmitter.js';
-import { initDb, isAlreadyProcessed, recordExtension, getExtensionCount } from './db.js';
+import { initDb, isAlreadyProcessed, recordExtension, getExtensionCount, registerStream, getStream, getDb } from './db.js';
 
 const app = express();
 
@@ -356,6 +356,76 @@ app.post('/api/v1/webhook/github', async (req, res) => {
       signature,
     },
   });
+});
+
+// ─── POST /api/v1/register-stream ────────────────────────────────────────────
+//
+// Called by the frontend immediately after a createStream tx confirms.
+// Tells the agent which GitHub repo to watch for this stream.
+//
+// Request body:
+// {
+//   streamId:     "0x<64 hex>",
+//   repo:         "owner/repo",
+//   recipient:    "0x<40 hex>",
+//   ratePerSecond: "1234"  (bigint as string)
+// }
+
+app.post('/api/v1/register-stream', async (req, res) => {
+  const { streamId, repo, recipient, ratePerSecond } = req.body;
+
+  if (!streamId || !repo) {
+    return res.status(400).json({ error: 'streamId and repo are required' });
+  }
+
+  if (!/^0x[a-fA-F0-9]{64}$/.test(streamId)) {
+    return res.status(400).json({ error: 'Invalid streamId format' });
+  }
+
+  try {
+    await registerStream({
+      streamId,
+      chainId:    421614, // default; could be extended with a chainId body param
+      githubRepo: repo,
+      sender:     null,
+      recipient:  recipient ?? null,
+      token:      null,
+    });
+
+    console.log(`[register-stream] ✓ Registered stream=${streamId} repo=${repo}`);
+    return res.json({ success: true, streamId, repo });
+  } catch (err) {
+    console.error('[register-stream] DB error:', err);
+    return res.status(500).json({ error: 'Failed to register stream' });
+  }
+});
+
+// ─── GET /api/v1/stream-status/:streamId ────────────────────────────────────
+//
+// Returns agent-side metadata for a stream: registered repo + extension history.
+
+app.get('/api/v1/stream-status/:streamId', async (req, res) => {
+  const { streamId } = req.params;
+
+  if (!/^0x[a-fA-F0-9]{64}$/.test(streamId)) {
+    return res.status(400).json({ error: 'Invalid streamId format' });
+  }
+
+  try {
+    const db = getDb();
+    const [stream, extResult] = await Promise.all([
+      getStream(streamId),
+      db.execute({
+        sql:  'SELECT * FROM processed_extensions WHERE stream_id = ? ORDER BY created_at DESC',
+        args: [streamId],
+      }),
+    ]);
+
+    return res.json({ streamId, stream, extensions: extResult.rows });
+  } catch (err) {
+    console.error('[stream-status] Error:', err);
+    return res.status(500).json({ error: 'Failed to fetch stream status' });
+  }
 });
 
 // ─── 404 Fallback ─────────────────────────────────────────────────────────────

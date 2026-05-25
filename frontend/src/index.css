@@ -1,0 +1,69 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background-color: #0A0A0F;
+    color: #F9FAFB;
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  #root { width: 100%; }
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: #12121A; }
+  ::-webkit-scrollbar-thumb { background: #1E1E2E; border-radius: 2px; }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-accent text-dark font-semibold px-6 py-3 rounded-lg
+           hover:opacity-90 active:scale-95 transition-all duration-200 cursor-pointer inline-block;
+  }
+  .btn-outline {
+    @apply border border-border text-white font-medium px-6 py-3 rounded-lg
+           hover:border-accent hover:text-accent transition-all duration-200 cursor-pointer inline-block;
+  }
+  .btn-ghost {
+    @apply text-muted font-medium px-4 py-2 rounded-lg
+           hover:text-white hover:bg-surface transition-all duration-200 cursor-pointer;
+  }
+  .card {
+    @apply bg-surface border border-border rounded-xl p-6;
+  }
+  .input {
+    @apply bg-dark border border-border rounded-lg px-4 py-3 text-white w-full
+           focus:outline-none focus:border-accent transition-colors duration-200
+           placeholder-muted font-mono text-sm;
+  }
+  .label {
+    @apply text-muted text-xs font-medium uppercase tracking-widest mb-2 block;
+  }
+  .badge-active {
+    @apply bg-accent/10 text-accent text-xs font-mono px-2 py-1 rounded-full border border-accent/20;
+  }
+  .badge-expired {
+    @apply bg-red-500/10 text-red-400 text-xs font-mono px-2 py-1 rounded-full border border-red-500/20;
+  }
+  .badge-cancelled {
+    @apply bg-yellow-500/10 text-yellow-400 text-xs font-mono px-2 py-1 rounded-full border border-yellow-500/20;
+  }
+  .grid-bg {
+    background-image: linear-gradient(#1E1E2E55 1px, transparent 1px),
+                      linear-gradient(90deg, #1E1E2E55 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+  .stat-card {
+    @apply card flex flex-col gap-1;
+  }
+  .stat-value {
+    @apply text-2xl font-mono font-semibold text-white;
+  }
+  .stat-label {
+    @apply text-muted text-xs uppercase tracking-widest;
+  }
+}
