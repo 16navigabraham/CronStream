@@ -40,7 +40,12 @@ export function useProfile(address) {
         });
         if (res.ok) {
           const { profile: serverProfile } = await res.json();
-          const enriched = { ...serverProfile, address };
+          // Normalise snake_case DB fields → camelCase local shape
+          const enriched = {
+            ...serverProfile,
+            address,
+            avatar: serverProfile.avatar_url ?? serverProfile.avatar ?? null,
+          };
           setProfile(enriched);
           localStorage.setItem(CACHE_KEY(address), JSON.stringify(enriched));
         }
@@ -97,7 +102,11 @@ export function useProfile(address) {
       });
       if (res.ok) {
         const { profile: serverProfile } = await res.json();
-        const enriched = { ...serverProfile, avatar: data.avatar, address };
+        const enriched = {
+          ...serverProfile,
+          address,
+          avatar: serverProfile.avatar_url ?? serverProfile.avatar ?? data.avatar ?? null,
+        };
         setProfile(enriched);
         localStorage.setItem(CACHE_KEY(address), JSON.stringify(enriched));
       }

@@ -9,27 +9,61 @@
  */
 
 import 'dotenv/config';
-import express from 'express';
-import crypto  from 'crypto';
+import express   from 'express';
+import crypto    from 'crypto';
+import helmet    from 'helmet';
+import rateLimit from 'express-rate-limit';
 
 import { verifyMilestone, VerificationError } from './verifyMilestone.js';
 import { signExtensionVoucher, getSignerAddress } from './agentSigner.js';
 import { submitExtension, getAllBalances }                    from './chainSubmitter.js';
 import { initDb, isAlreadyProcessed, recordExtension, getExtensionCount, registerStream, getStream, getDb, upsertProfile, getProfile, getProfileByApiKey, searchProfiles, isUsernameTaken, addToWaitlist, getWaitlistCount } from './db.js';
 import { publicProfile } from './encryption.js';
+import publicApiRouter        from './publicApi.js';
+import { startStreamListeners } from './streamListener.js';
 
 const app = express();
 
+// ─── Security headers (Helmet) ────────────────────────────────────────────────
+app.use(helmet({
+  contentSecurityPolicy: false, // API server — no HTML served
+  crossOriginEmbedderPolicy: false,
+}));
+
 // ─── CORS ─────────────────────────────────────────────────────────────────────
-// Allow the frontend (any origin in dev; specific origin in prod via CORS_ORIGIN)
+// Tighten with CORS_ORIGIN in production — defaults to * in dev only.
+// In production set CORS_ORIGIN=https://your-frontend.vercel.app
+const ALLOWED_ORIGIN = process.env.CORS_ORIGIN ?? '*';
+
 app.use((req, res, next) => {
-  const origin = process.env.CORS_ORIGIN ?? '*';
-  res.setHeader('Access-Control-Allow-Origin',  origin);
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Origin',   ALLOWED_ORIGIN);
+  res.setHeader('Access-Control-Allow-Methods',  'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers',  'Content-Type, Authorization, X-PAYMENT, X-Payment-Response');
+  res.setHeader('Access-Control-Expose-Headers', 'X-Payment-Response, X-Payment-Requirements');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
+
+// ─── Rate limiting ────────────────────────────────────────────────────────────
+// Loose global limit — protects against basic flooding.
+const globalLimiter = rateLimit({
+  windowMs: 60_000,       // 1 minute
+  max:      120,          // 120 req/min per IP across all routes
+  standardHeaders: true,
+  legacyHeaders:   false,
+  message: { error: 'Too many requests — slow down' },
+});
+
+// Tight limit on expensive endpoints that hit external APIs or sign on-chain.
+const sensitiveLimit = rateLimit({
+  windowMs: 60_000,
+  max:      10,           // 10 req/min per IP
+  standardHeaders: true,
+  legacyHeaders:   false,
+  message: { error: 'Rate limit exceeded for this endpoint' },
+});
+
+app.use(globalLimiter);
 
 // ─── Request logging ──────────────────────────────────────────────────────────
 app.use((req, _res, next) => {
@@ -52,9 +86,8 @@ app.use(
 );
 
 // ─── API Key Auth ─────────────────────────────────────────────────────────────
-// Supports two key formats:
-//   1. Generated key  — random cs_live_<32 chars>, stored in DB profiles.api_key
-//   2. Derived key    — cs_live_ + base64(walletAddress), reversible without DB
+// Keys are generated per-profile and stored as HMAC-SHA256 in the DB.
+// The plaintext key (cs_live_<32 chars>) is shown once at generation time.
 
 async function verifyApiKey(req, res, next) {
   const auth = (req.headers['authorization'] ?? '').trim();
@@ -64,7 +97,6 @@ async function verifyApiKey(req, res, next) {
 
   const key = auth.slice('Bearer '.length);
 
-  // 1. Check DB for a stored (generated) key
   try {
     const profile = await getProfileByApiKey(key);
     if (profile) {
@@ -72,20 +104,10 @@ async function verifyApiKey(req, res, next) {
       return next();
     }
   } catch {
-    // DB unavailable — fall through to derived key check
+    // DB unavailable
   }
 
-  // 2. Fall back to derived key (base64-encoded wallet address)
-  try {
-    const encoded = key.slice('cs_live_'.length);
-    const padded  = encoded + '='.repeat((4 - encoded.length % 4) % 4);
-    const address = Buffer.from(padded, 'base64').toString('utf8').toLowerCase();
-    if (!/^0x[a-f0-9]{40}$/.test(address)) throw new Error('bad address');
-    req.callerAddress = address;
-    return next();
-  } catch {
-    return res.status(401).json({ error: 'Unauthorized — invalid API key' });
-  }
+  return res.status(401).json({ error: 'Unauthorized — invalid API key' });
 }
 
 // ─── Shared Helpers ──────────────────────────────────────────────────────────
@@ -101,32 +123,41 @@ function getVoucherExpiry() {
 
 // ─── Health Check ─────────────────────────────────────────────────────────────
 
-app.get('/health', async (_req, res) => {
-  let signerAddress, signerError, balances, balanceError;
+// ─── Public API (x402 pay-per-call) ──────────────────────────────────────────
+app.use('/api/public', publicApiRouter);
 
-  try { signerAddress = getSignerAddress(); }
-  catch (err) { signerError = err.message; }
+app.get('/health', async (req, res) => {
+  // Detailed health info (signer address, balances) only for internal/authenticated callers.
+  // Public callers get a minimal status — enough for uptime monitors, nothing for attackers.
+  const isInternal = req.headers['x-internal-token'] === process.env.INTERNAL_HEALTH_TOKEN
+    && process.env.INTERNAL_HEALTH_TOKEN;
 
-  try { balances = await getAllBalances(); }
-  catch (err) { balanceError = err.message; }
+  let signerOk = false, balances, anyLowBalance = false;
 
-  const anyLowBalance = balances && Object.values(balances).some(
-    b => b !== 'unavailable' && parseFloat(b) < 0.01,
-  );
+  try { getSignerAddress(); signerOk = true; } catch { /* no key */ }
+  try {
+    balances = await getAllBalances();
+    anyLowBalance = Object.values(balances).some(b => b !== 'unavailable' && parseFloat(b) < 0.01);
+  } catch { /* rpc unavailable */ }
 
-  res.json({
-    status:           (signerError || anyLowBalance) ? 'degraded' : 'ok',
-    signerAddress:    signerAddress ?? null,
-    signerError:      signerError   ?? undefined,
-    balances,                                      // ETH on each chain
-    balanceError:     balanceError  ?? undefined,
-    contracts: {
-      arbitrumSepolia: { chainId: 421614, address: process.env.CONTRACT_ADDRESS_ARB_SEPOLIA || process.env.CONTRACT_ADDRESS || null },
-      robinhoodChain:  { chainId: 46630,  address: process.env.CONTRACT_ADDRESS_ROBINHOOD  || process.env.CONTRACT_ADDRESS || null },
-    },
-    extensionsServed: await getExtensionCount(),
-    timestamp:        new Date().toISOString(),
-  });
+  const status = (!signerOk || anyLowBalance) ? 'degraded' : 'ok';
+
+  if (isInternal) {
+    return res.json({
+      status,
+      signerAddress:    getSignerAddress(),
+      balances,
+      contracts: {
+        arbitrumSepolia: { chainId: 421614, address: process.env.CONTRACT_ADDRESS_ARB_SEPOLIA || process.env.CONTRACT_ADDRESS || null },
+        robinhoodChain:  { chainId: 46630,  address: process.env.CONTRACT_ADDRESS_ROBINHOOD  || process.env.CONTRACT_ADDRESS || null },
+      },
+      extensionsServed: await getExtensionCount(),
+      timestamp:        new Date().toISOString(),
+    });
+  }
+
+  // Public response — status only
+  res.json({ status, timestamp: new Date().toISOString() });
 });
 
 // ─── POST /api/v1/verify-milestone ────────────────────────────────────────────
@@ -155,7 +186,7 @@ app.get('/health', async (_req, res) => {
 //   voucher:      { streamId, extensionDurationSeconds, nonce, expiry, signature }
 // }
 
-app.post('/api/v1/verify-milestone', verifyApiKey, async (req, res) => {
+app.post('/api/v1/verify-milestone', sensitiveLimit, verifyApiKey, async (req, res) => {
   const {
     streamId,
     contractorAddress,
@@ -274,7 +305,7 @@ app.post('/api/v1/verify-milestone', verifyApiKey, async (req, res) => {
 //   CronStream-Nonce: <integer>
 // The agent parses these from the PR body to know which stream to extend.
 
-app.post('/api/v1/webhook/github', async (req, res) => {
+app.post('/api/v1/webhook/github', sensitiveLimit, async (req, res) => {
   // ── HMAC signature verification ───────────────────────────────────────────
   const secret = process.env.GITHUB_WEBHOOK_SECRET;
 
@@ -308,7 +339,11 @@ app.post('/api/v1/webhook/github', async (req, res) => {
       return res.status(401).json({ error: 'Invalid webhook signature' });
     }
   } else {
-    console.warn('[webhook] GITHUB_WEBHOOK_SECRET not set — skipping signature check');
+    if (process.env.NODE_ENV === 'production') {
+      // In production, reject unsigned webhooks — GITHUB_WEBHOOK_SECRET must be set
+      return res.status(401).json({ error: 'Webhook secret not configured — set GITHUB_WEBHOOK_SECRET' });
+    }
+    console.warn('[webhook] GITHUB_WEBHOOK_SECRET not set — signature check skipped (dev only)');
   }
 
   const event   = req.headers['x-github-event'];
@@ -379,14 +414,13 @@ app.post('/api/v1/webhook/github', async (req, res) => {
   } catch { /* DB unavailable — fall through with github defaults */ }
 
   // ── Build githubPayload for github-source streams ─────────────────────────
-  // workflow_run is absent from pull_request events — treat a merged PR as
-  // CI-passed unless the caller overrides via X-CI-Conclusion header.
-  const ciConclusion = req.headers['x-ci-conclusion'] ?? 'success';
-
+  // workflow_run conclusion is not available in pull_request events — a merged PR
+  // is treated as CI-passed. The verifier still checks qualifying files / PR metadata.
+  // We do NOT trust any caller-supplied headers for CI status.
   const githubPayload = verificationSource === 'github' ? {
     repository:   payload.repository,
     pull_request: pr,
-    workflow_run: { conclusion: ciConclusion },
+    workflow_run: { conclusion: 'success' }, // merged PR implies CI passed
   } : null;
 
   // ── Verification ──────────────────────────────────────────────────────────
@@ -800,6 +834,11 @@ try {
   console.warn('[db] ⚠ Failed to initialize database:', err.message);
   console.warn('[db] ⚠ Server will start in degraded mode — profile features unavailable');
 }
+
+// Start on-chain stream event listeners (non-blocking)
+startStreamListeners().catch(err =>
+  console.warn('[listener] Failed to start stream listeners:', err.message),
+);
 
 app.listen(PORT, async () => {
   console.log('═══════════════════════════════════════════════════');

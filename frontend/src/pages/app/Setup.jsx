@@ -61,13 +61,20 @@ function UsernameField({ value, address, onChange }) {
 export default function Setup() {
   const navigate = useNavigate();
   const { address } = useAccount();
-  const { saveProfile } = useProfile(address);
+  const { saveProfile, profile, synced } = useProfile(address);
 
   const [role,    setRole]    = useState(null);
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
     username: '', name: '', github: '', website: '',
   });
+
+  // If profile already exists redirect immediately — don't show the form
+  useEffect(() => {
+    if (synced && profile?.role) {
+      navigate('/app/dashboard', { replace: true });
+    }
+  }, [synced, profile, navigate]);
 
   function handleChange(e) {
     setForm(f => ({ ...f, [e.target.name]: e.target.value }));
@@ -82,6 +89,15 @@ export default function Setup() {
   }
 
   const isCompany = role === 'company';
+
+  // While waiting for server to confirm no existing profile — show nothing
+  if (!synced) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 sm:p-6">

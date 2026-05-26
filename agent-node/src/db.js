@@ -302,7 +302,7 @@ export async function upsertProfile({ address, username, role, name, github, twi
             linkedin             = excluded.linkedin,
             farcaster            = excluded.farcaster,
             website              = excluded.website,
-            avatar_url           = excluded.avatar_url,
+            avatar_url           = COALESCE(excluded.avatar_url, profiles.avatar_url),
             api_key              = CASE WHEN excluded.api_key IS NULL AND ? = 'clear'
                                         THEN NULL
                                         ELSE COALESCE(excluded.api_key, profiles.api_key) END,
