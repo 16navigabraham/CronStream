@@ -10,9 +10,12 @@ import StreamDetail from './pages/app/StreamDetail';
 import Withdraw     from './pages/app/Withdraw';
 import Settings     from './pages/app/Settings';
 import AppShell     from './components/AppShell';
+import LogoLoader   from './components/LogoLoader';
 
 function ProtectedRoute({ children }) {
-  const { isConnected } = useAccount();
+  const { isConnected, isConnecting, isReconnecting } = useAccount();
+  // Show 3D loader while wagmi is re-hydrating session from localStorage
+  if (isConnecting || isReconnecting) return <LogoLoader label="Connecting…" />;
   if (!isConnected) return <Navigate to="/" replace />;
   return children;
 }

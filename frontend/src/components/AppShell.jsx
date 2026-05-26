@@ -5,6 +5,12 @@ import { useAccount } from 'wagmi';
 import { useProfile } from '../hooks/useProfile';
 import { useCreateStream } from '../context/CreateStreamContext';
 import CreateStreamModal from './CreateStreamModal';
+import Watermark         from './Watermark';
+
+const CHAIN_ICONS = {
+  421614: '/arb.png',        // Arbitrum Sepolia
+  46630:  '/robinhood.png',  // Robinhood Chain
+};
 
 export default function AppShell() {
   const { address }        = useAccount();
@@ -85,9 +91,11 @@ export default function AppShell() {
                   className="w-full flex items-center gap-2 px-3 py-2 border-b border-border hover:bg-white/5 transition-colors"
                 >
                   <div className="w-4 h-4 rounded-full overflow-hidden border border-border shrink-0">
-                    {chain?.hasIcon && chain.iconUrl
-                      ? <img src={chain.iconUrl} alt={chain.name} className="w-full h-full" />
-                      : <div className="w-full h-full bg-accent/20 flex items-center justify-center text-accent text-[8px] font-mono">{chain?.name?.[0] ?? '?'}</div>
+                    {CHAIN_ICONS[chain?.id]
+                      ? <img src={CHAIN_ICONS[chain.id]} alt={chain.name} className="w-full h-full object-contain" />
+                      : chain?.hasIcon && chain.iconUrl
+                        ? <img src={chain.iconUrl} alt={chain.name} className="w-full h-full" />
+                        : <div className="w-full h-full bg-accent/20 flex items-center justify-center text-accent text-[8px] font-mono">{chain?.name?.[0] ?? '?'}</div>
                     }
                   </div>
                   <span className="text-xs text-muted truncate flex-1 text-left">{chain?.name ?? 'Unknown network'}</span>
@@ -173,9 +181,9 @@ export default function AppShell() {
               if (!mounted || !account) return <div className="w-8" />;
               return (
                 <div className="flex items-center gap-1.5">
-                  {chain?.hasIcon && chain.iconUrl && (
+                  {(CHAIN_ICONS[chain?.id] || (chain?.hasIcon && chain.iconUrl)) && (
                     <button onClick={openChainModal} className="w-5 h-5 rounded-full overflow-hidden border border-border">
-                      <img src={chain.iconUrl} alt="" className="w-full h-full" />
+                      <img src={CHAIN_ICONS[chain?.id] ?? chain.iconUrl} alt="" className="w-full h-full object-contain" />
                     </button>
                   )}
                   <button
@@ -221,6 +229,9 @@ export default function AppShell() {
           )}
         </nav>
       </div>
+
+      {/* Tiled page watermark — z-index 0, sits behind everything */}
+      <Watermark variant="page" />
 
       {/* Global modal */}
       <CreateStreamModal />

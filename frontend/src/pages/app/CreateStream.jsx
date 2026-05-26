@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract, usePublicClient } from 'wagmi';
+import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract, usePublicClient, useChainId } from 'wagmi';
 import { parseUnits, formatUnits, parseAbiItem, maxUint256 } from 'viem';
-import { CONTRACT_ADDRESS, ROUTER_ABI } from '../../lib/wagmi';
+import { getContractAddress, ROUTER_ABI } from '../../lib/wagmi';
 import { registerStreamWithAgent } from '../../hooks/useAgentStatus';
 
 // ─── Token registry ───────────────────────────────────────────────────────────
@@ -54,6 +54,7 @@ export default function CreateStream() {
   const navigate    = useNavigate();
   const { address } = useAccount();
   const publicClient = usePublicClient();
+  const chainId     = useChainId();
 
   const [step,   setStep]   = useState(1);    // 1=configure, 2=approve, 3=create
   const [createdStreamId, setCreatedStreamId] = useState(null);
@@ -83,7 +84,7 @@ export default function CreateStream() {
     address:      form.token,
     abi:          ERC20_ABI,
     functionName: 'allowance',
-    args:         [address, CONTRACT_ADDRESS],
+    args:         [address, getContractAddress(chainId)],
     query:        { enabled: !!address && step >= 2 },
   });
 
@@ -111,7 +112,7 @@ export default function CreateStream() {
           'event StreamCreated(bytes32 indexed streamId, address indexed sender, address indexed recipient, uint256 ratePerSecond)',
         );
         const log = createReceipt.logs.find(
-          l => l.address.toLowerCase() === CONTRACT_ADDRESS.toLowerCase(),
+          l => l.address.toLowerCase() === getContractAddress(chainId).toLowerCase(),
         );
         if (log) {
           const decoded = publicClient.decodeEventLog({ abi: [event], data: log.data, topics: log.topics });
@@ -148,13 +149,13 @@ export default function CreateStream() {
       address:      form.token,
       abi:          ERC20_ABI,
       functionName: 'approve',
-      args:         [CONTRACT_ADDRESS, maxUint256],
+      args:         [getContractAddress(chainId), maxUint256],
     });
   }
 
   function handleCreate() {
     doCreate({
-      address:      CONTRACT_ADDRESS,
+      address:      getContractAddress(chainId),
       abi:          ROUTER_ABI,
       functionName: 'createStream',
       args: [
@@ -320,7 +321,7 @@ export default function CreateStream() {
           <div className="card flex flex-col gap-3">
             <div className="flex justify-between text-sm">
               <span className="text-muted">Spender</span>
-              <span className="font-mono text-xs">{CONTRACT_ADDRESS.slice(0, 10)}…{CONTRACT_ADDRESS.slice(-6)}</span>
+              <span className="font-mono text-xs">{getContractAddress(chainId).slice(0, 10)}…{getContractAddress(chainId).slice(-6)}</span>
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-muted">Amount</span>

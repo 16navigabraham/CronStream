@@ -1,19 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
-import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract, usePublicClient } from 'wagmi';
+import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract, usePublicClient, useChainId } from 'wagmi';
 import { parseUnits, formatUnits, parseAbiItem, maxUint256 } from 'viem';
-import { CONTRACT_ADDRESS, ROUTER_ABI } from '../lib/wagmi';
+import { getContractAddress, ROUTER_ABI } from '../lib/wagmi';
 import { registerStreamWithAgent }      from '../hooks/useAgentStatus';
 import { useCreateStream }              from '../context/CreateStreamContext';
 import { useProfile }                  from '../hooks/useProfile';
 import RepoPicker                      from './RepoPicker';
+import Watermark                       from './Watermark';
+import { useWalletTokens }             from '../hooks/useWalletTokens';
 
 const AGENT_URL = import.meta.env.VITE_AGENT_URL ?? 'http://localhost:3000';
-
-const TOKENS = [
-  { symbol: 'USDC', address: '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d', decimals: 6,  chain: 'Arb Sepolia' },
-  { symbol: 'TSLA', address: '0x0000000000000000000000000000000000000001', decimals: 18, chain: 'Robinhood' },
-  { symbol: 'AMZN', address: '0x0000000000000000000000000000000000000002', decimals: 18, chain: 'Robinhood' },
-];
 
 const ERC20_ABI = [
   'function approve(address spender, uint256 amount) external returns (bool)',
@@ -162,6 +158,8 @@ export default function CreateStreamModal() {
   const { address }   = useAccount();
   const { profile }   = useProfile(address);
   const publicClient  = usePublicClient();
+  const chainId       = useChainId();
+  const { tokens: walletTokens, isLoading: tokensLoading } = useWalletTokens(address, chainId);
 
   const [step,            setStep]            = useState(0);
   const [createdStreamId, setCreatedStreamId] = useState(null);
@@ -174,10 +172,19 @@ export default function CreateStreamModal() {
     { key: 'figma',     label: 'Figma',     placeholder: 'https://figma.com/file/…',            hint: 'Approved frames / published' },
   ];
 
+  // Default to USDC on Arb Sepolia; updates to first available wallet token once loaded
+  const DEFAULT_TOKEN = '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d';
   const [form, setForm] = useState({
-    token: TOKENS[0].address, ratePerDay: '', durationDays: '',
+    token: DEFAULT_TOKEN, ratePerDay: '', durationDays: '',
     verificationSource: 'github', verificationTarget: '',
   });
+
+  // When wallet tokens load, auto-select the first one if current selection not in list
+  useEffect(() => {
+    if (!walletTokens.length) return;
+    const found = walletTokens.find(t => t.address === form.token);
+    if (!found) setForm(f => ({ ...f, token: walletTokens[0].address }));
+  }, [walletTokens]);
 
   // Apply prefill (e.g. from CompanyDashboard contractor search)
   useEffect(() => {
@@ -186,7 +193,7 @@ export default function CreateStreamModal() {
     }
   }, [open, prefill]);
 
-  const selectedToken  = TOKENS.find(t => t.address === form.token) ?? TOKENS[0];
+  const selectedToken  = walletTokens.find(t => t.address === form.token) ?? walletTokens[0] ?? { symbol: 'USDC', address: DEFAULT_TOKEN, decimals: 6 };
   const { decimals }   = selectedToken;
   const recipientAddr  = selectedContractor?.address ?? '';
 
@@ -203,7 +210,7 @@ export default function CreateStreamModal() {
   function handleClose() {
     if (step === 1 || step === 2) return; // block close mid-tx
     setStep(0);
-    setForm({ token: TOKENS[0].address, ratePerDay: '', durationDays: '', verificationSource: 'github', verificationTarget: '' });
+    setForm({ token: walletTokens[0]?.address ?? DEFAULT_TOKEN, ratePerDay: '', durationDays: '', verificationSource: 'github', verificationTarget: '' });
     setSelectedContractor(null);
     setCreatedStreamId(null);
     closeModal();
@@ -212,7 +219,7 @@ export default function CreateStreamModal() {
   // Allowance
   const { data: allowance, refetch: refetchAllowance } = useReadContract({
     address: form.token, abi: ERC20_ABI, functionName: 'allowance',
-    args: [address, CONTRACT_ADDRESS],
+    args: [address, getContractAddress(chainId)],
     query: { enabled: !!address && step >= 1 },
   });
   const needsApproval = allowance != null && totalCostRaw > 0n && allowance < totalCostRaw;
@@ -231,7 +238,7 @@ export default function CreateStreamModal() {
     async function finish() {
       try {
         const event = parseAbiItem('event StreamCreated(bytes32 indexed streamId, address indexed sender, address indexed recipient, uint256 ratePerSecond)');
-        const log = createReceipt.logs.find(l => l.address.toLowerCase() === CONTRACT_ADDRESS.toLowerCase());
+        const log = createReceipt.logs.find(l => l.address.toLowerCase() === getContractAddress(chainId).toLowerCase());
         if (log) {
           const decoded = publicClient.decodeEventLog({ abi: [event], data: log.data, topics: log.topics });
           setCreatedStreamId(decoded.streamId);
@@ -258,7 +265,7 @@ export default function CreateStreamModal() {
 
   return (
     <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget) handleClose(); }}>
-      <div className="modal-panel w-full max-w-lg max-h-[92vh] overflow-y-auto">
+      <div className="modal-panel w-full max-w-lg max-h-[92vh] overflow-y-auto relative overflow-hidden">
 
         {/* Header */}
         <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-border">
@@ -283,18 +290,39 @@ export default function CreateStreamModal() {
               </div>
 
               <div>
-                <label className="label">Payment token</label>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="label mb-0">Payment token</label>
+                  {tokensLoading && (
+                    <div className="flex items-center gap-1.5 text-xs text-muted">
+                      <div className="w-3 h-3 border border-accent border-t-transparent rounded-full animate-spin" />
+                      Loading balances…
+                    </div>
+                  )}
+                </div>
                 <div className="grid grid-cols-3 gap-2">
-                  {TOKENS.map(t => (
+                  {walletTokens.map(t => (
                     <button key={t.address} type="button"
                       onClick={() => setForm(f => ({ ...f, token: t.address }))}
                       className={`p-3 rounded-xl border text-left transition-all text-sm
                         ${form.token === t.address ? 'border-accent/50 bg-accent/5 text-accent' : 'border-border text-muted hover:text-white'}`}
                     >
-                      <div className="font-semibold">{t.symbol}</div>
-                      <div className="text-xs opacity-50 mt-0.5">{t.chain}</div>
+                      <div className="flex items-center gap-1.5 mb-0.5">
+                        {t.logoUrl
+                          ? <img src={t.logoUrl} alt={t.symbol} className="w-4 h-4 rounded-full shrink-0" onError={e => { e.target.style.display = 'none'; }} />
+                          : <span className="w-4 h-4 rounded-full bg-accent/20 flex items-center justify-center text-[8px] font-bold text-accent shrink-0">{t.symbol[0]}</span>
+                        }
+                        <span className="font-semibold">{t.symbol}</span>
+                      </div>
+                      {t.balanceRaw > 0n
+                        ? <div className="text-[11px] opacity-60 font-mono">{t.balance}</div>
+                        : <div className="text-[11px] opacity-40">no balance</div>
+                      }
                     </button>
                   ))}
+                  {/* Custom token address */}
+                  {walletTokens.length === 0 && !tokensLoading && (
+                    <p className="col-span-3 text-xs text-muted">No tokens found on this chain.</p>
+                  )}
                 </div>
               </div>
 
@@ -315,7 +343,7 @@ export default function CreateStreamModal() {
 
               {/* Verification source */}
               <div>
-                <label className="label">Verification source <span className="text-muted/50 normal-case tracking-normal font-normal">— agent checks this to extend the stream</span></label>
+                <label className="label">Verification source <span className="text-muted/50 normal-case tracking-normal font-normal">(agent checks this to extend the stream)</span></label>
                 {/* Source tabs */}
                 <div className="grid grid-cols-4 gap-1.5 mb-3 p-1 bg-dark border border-border rounded-xl">
                   {VERIFICATION_SOURCES.map(src => (
@@ -378,7 +406,7 @@ export default function CreateStreamModal() {
                 </div>
                 <div className="flex justify-between px-4 py-3">
                   <span className="text-muted">Spender</span>
-                  <span>{CONTRACT_ADDRESS.slice(0,10)}…{CONTRACT_ADDRESS.slice(-6)}</span>
+                  <span>{getContractAddress(chainId).slice(0,10)}…{getContractAddress(chainId).slice(-6)}</span>
                 </div>
                 <div className="flex justify-between px-4 py-3 bg-accent/5">
                   <span className="text-muted">Amount</span>
@@ -386,7 +414,7 @@ export default function CreateStreamModal() {
                 </div>
               </div>
               {needsApproval !== false ? (
-                <button onClick={() => doApprove({ address: form.token, abi: ERC20_ABI, functionName: 'approve', args: [CONTRACT_ADDRESS, maxUint256] })}
+                <button onClick={() => doApprove({ address: form.token, abi: ERC20_ABI, functionName: 'approve', args: [getContractAddress(chainId), maxUint256] })}
                   disabled={approvePending || approveConfirming}
                   className="btn-primary w-full disabled:opacity-40">
                   {approvePending ? 'Confirm in wallet…' : approveConfirming ? 'Approving…' : `Approve ${selectedToken.symbol}`}
@@ -420,7 +448,7 @@ export default function CreateStreamModal() {
                   </div>
                 ))}
               </div>
-              <button onClick={() => doCreate({ address: CONTRACT_ADDRESS, abi: ROUTER_ABI, functionName: 'createStream', args: [recipientAddr, form.token, ratePerSecond, BigInt(parseInt(form.durationDays) * 86400)] })}
+              <button onClick={() => doCreate({ address: getContractAddress(chainId), abi: ROUTER_ABI, functionName: 'createStream', args: [recipientAddr, form.token, ratePerSecond, BigInt(parseInt(form.durationDays) * 86400)] })}
                 disabled={createPending || createConfirming}
                 className="btn-primary w-full disabled:opacity-40">
                 {createPending ? 'Confirm in wallet…' : createConfirming ? 'Creating…' : 'Deposit & start stream'}
@@ -458,6 +486,7 @@ export default function CreateStreamModal() {
             </div>
           )}
         </div>
+        <Watermark variant="modal" />
       </div>
     </div>
   );

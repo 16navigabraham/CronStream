@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { useReadContract, useWriteContract, useWaitForTransactionReceipt, useChainId } from 'wagmi';
 import { formatUnits } from 'viem';
-import { CONTRACT_ADDRESS, ROUTER_ABI } from '../lib/wagmi';
+import { getContractAddress, ROUTER_ABI } from '../lib/wagmi';
 import LiveBalance from './LiveBalance';
 import WithdrawModal from './WithdrawModal';
 
@@ -37,11 +37,12 @@ function timeRemaining(until) {
  */
 export default function StreamCard({ streamId, role, onRefresh }) {
   const navigate = useNavigate();
+  const chainId  = useChainId();
   const [showWithdraw, setShowWithdraw] = useState(false);
   const [reclaimSuccess, setReclaimSuccess] = useState(false);
 
   const { data: stream, isLoading } = useReadContract({
-    address:      CONTRACT_ADDRESS,
+    address:      getContractAddress(chainId),
     abi:          ROUTER_ABI,
     functionName: 'streams',
     args:         [streamId],
@@ -85,7 +86,7 @@ export default function StreamCard({ streamId, role, onRefresh }) {
 
   function handleReclaim() {
     doReclaim({
-      address:      CONTRACT_ADDRESS,
+      address:      getContractAddress(chainId),
       abi:          ROUTER_ABI,
       functionName: role === 'company' ? 'reclaimUnearned' : 'withdrawFromStream',
       args:         [streamId],
@@ -125,17 +126,76 @@ export default function StreamCard({ streamId, role, onRefresh }) {
               {timeLeft && <span className="ml-2 text-muted/60">· {timeLeft} left</span>}
             </div>
 
-            {/* Progress bar */}
-            <div className="mt-3 progress-track">
+            {/* 3D extruded progress bar */}
+            <div className="mt-3" style={{ perspective: '120px' }}>
+              {/* Track */}
               <div
-                className="progress-fill bg-accent/50"
-                style={{ width: `${progressPct}%`, background: isActive ? '#00D4AA80' : '#6B728080' }}
-              />
+                style={{
+                  position: 'relative',
+                  height: '12px',
+                  borderRadius: '6px',
+                  background: 'rgba(255,255,255,0.05)',
+                  border: '1px solid rgba(255,255,255,0.07)',
+                  overflow: 'hidden',
+                  transformStyle: 'preserve-3d',
+                }}
+              >
+                {/* Fill — top face */}
+                <div
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    width: `${progressPct}%`,
+                    borderRadius: '5px',
+                    background: isActive
+                      ? 'linear-gradient(180deg, #1AFFC8 0%, #00D4AA 55%, #00A882 100%)'
+                      : 'linear-gradient(180deg, #7A8090 0%, #4B5160 55%, #2E3240 100%)',
+                    boxShadow: isActive
+                      ? '0 0 8px rgba(0,212,170,0.5), inset 0 1px 0 rgba(255,255,255,0.25)'
+                      : 'none',
+                    transition: 'width 0.8s cubic-bezier(0.4,0,0.2,1)',
+                  }}
+                />
+                {/* Bottom extrusion shadow — gives depth illusion */}
+                <div
+                  style={{
+                    position: 'absolute',
+                    bottom: 0,
+                    left: 0,
+                    width: `${progressPct}%`,
+                    height: '3px',
+                    borderRadius: '0 0 5px 5px',
+                    background: isActive ? 'rgba(0,80,60,0.7)' : 'rgba(0,0,0,0.4)',
+                    transition: 'width 0.8s cubic-bezier(0.4,0,0.2,1)',
+                  }}
+                />
+                {/* Moving shimmer on active streams */}
+                {isActive && progressPct > 0 && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: `calc(${progressPct}% - 24px)`,
+                      width: '24px',
+                      height: '100%',
+                      background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.35), transparent)',
+                      animation: 'shimmer-edge 2s ease-in-out infinite',
+                    }}
+                  />
+                )}
+              </div>
             </div>
-            <div className="flex justify-between text-xs text-muted/50 mt-1 font-mono">
+            <div className="flex justify-between text-xs text-muted/50 mt-1.5 font-mono">
               <span>0%</span>
-              <span>{progressPct.toFixed(0)}%</span>
+              <span className={isActive ? 'text-accent/70' : ''}>{progressPct.toFixed(0)}%</span>
             </div>
+
+            <style>{`
+              @keyframes shimmer-edge {
+                0%, 100% { opacity: 0.4; transform: scaleY(0.8); }
+                50%       { opacity: 1;   transform: scaleY(1.1); }
+              }
+            `}</style>
           </div>
 
           {/* Right: live balance */}

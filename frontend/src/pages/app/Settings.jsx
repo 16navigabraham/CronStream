@@ -4,9 +4,9 @@ import { useAccount } from 'wagmi';
 import { useProfile }     from '../../hooks/useProfile';
 import { useAgentStatus } from '../../hooks/useAgentStatus';
 import { useStreams }      from '../../hooks/useStreams';
+import { CONTRACT_ADDRESSES } from '../../lib/wagmi';
 
-const CONTRACT_ADDRESS = '0x3feb14d164EaA05a85e0276321E4F090a03549f9';
-const AGENT_URL        = import.meta.env.VITE_AGENT_URL ?? 'http://localhost:3000';
+const AGENT_URL = import.meta.env.VITE_AGENT_URL ?? 'http://localhost:3000';
 
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -680,7 +680,7 @@ export default function Settings() {
           {/* API Keys */}
           <Section
             title="API Keys"
-            desc="Use your API key to authenticate requests to the CronStream agent. Keep it secret — treat it like a password."
+            desc="Use your API key to authenticate requests to the CronStream agent. Keep it secret,treat it like a password."
           >
             {/* Single merged key block */}
             <div className="bg-dark border border-border rounded-xl overflow-hidden">
@@ -796,8 +796,8 @@ export default function Settings() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {[
                 { label: 'GitHub',             desc: 'Source code, contracts, agent node',         href: 'https://github.com/16navigabraham/CronStream' },
-                { label: 'Arbiscan',           desc: 'Contract on Arbitrum Sepolia',                href: `https://sepolia.arbiscan.io/address/${CONTRACT_ADDRESS}` },
-                { label: 'Robinhood Explorer', desc: 'Contract on Robinhood Chain Testnet',         href: `https://explorer.testnet.chain.robinhood.com/address/${CONTRACT_ADDRESS}` },
+                { label: 'Arbiscan',           desc: 'Contract on Arbitrum Sepolia',        href: `https://sepolia.arbiscan.io/address/${CONTRACT_ADDRESSES[421614]}` },
+                { label: 'Robinhood Explorer', desc: 'Contract on Robinhood Chain',          href: `https://explorer.testnet.chain.robinhood.com/address/${CONTRACT_ADDRESSES[46630]}` },
                 { label: 'Arbitrum Faucet',    desc: 'Testnet ETH for gas',                         href: 'https://faucet.triangleplatform.com/arbitrum/sepolia' },
               ].map(({ label, desc, href }) => (
                 <a key={label} href={href} target="_blank" rel="noopener noreferrer"

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
-import { useReadContract } from 'wagmi';
+import { useReadContract, useChainId } from 'wagmi';
 import { formatUnits } from 'viem';
-import { CONTRACT_ADDRESS, ROUTER_ABI } from '../lib/wagmi';
+import { getContractAddress, ROUTER_ABI } from '../lib/wagmi';
 
 /**
  * LiveBalance — ticks up in real-time using ratePerSecond interpolation.
@@ -18,6 +18,7 @@ export default function LiveBalance({
   className = '',
   showTicker = true,
 }) {
+  const chainId  = useChainId();
   const [display, setDisplay] = useState(null);
   const baseRef    = useRef(null);  // { value: number, fetchedAt: number }
   const frameRef   = useRef(null);
@@ -25,7 +26,7 @@ export default function LiveBalance({
   const isExpired = BigInt(Math.floor(Date.now() / 1000)) >= streamValidUntil;
 
   const { data: onChainBalance, dataUpdatedAt } = useReadContract({
-    address:      CONTRACT_ADDRESS,
+    address:      getContractAddress(chainId),
     abi:          ROUTER_ABI,
     functionName: 'balanceOf',
     args:         [streamId],

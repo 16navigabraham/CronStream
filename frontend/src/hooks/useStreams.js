@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { usePublicClient, useAccount } from 'wagmi';
+import { usePublicClient, useAccount, useChainId } from 'wagmi';
 import { parseAbiItem } from 'viem';
-import { CONTRACT_ADDRESS } from '../lib/wagmi';
+import { getContractAddress } from '../lib/wagmi';
 
 const STREAM_CREATED = parseAbiItem(
   'event StreamCreated(bytes32 indexed streamId, address indexed sender, address indexed recipient, uint256 ratePerSecond)'
@@ -13,7 +13,8 @@ const STREAM_CREATED = parseAbiItem(
  */
 export function useStreams() {
   const { address } = useAccount();
-  const client = usePublicClient();
+  const client  = usePublicClient();
+  const chainId = useChainId();
 
   const [sent,     setSent]     = useState([]);
   const [received, setReceived] = useState([]);
@@ -26,17 +27,18 @@ export function useStreams() {
 
     async function fetch() {
       setLoading(true);
+      const contractAddress = getContractAddress(chainId);
       try {
         const [sentLogs, receivedLogs] = await Promise.all([
           client.getLogs({
-            address: CONTRACT_ADDRESS,
+            address: contractAddress,
             event:   STREAM_CREATED,
             args:    { sender: address },
             fromBlock: 0n,
             toBlock:  'latest',
           }),
           client.getLogs({
-            address: CONTRACT_ADDRESS,
+            address: contractAddress,
             event:   STREAM_CREATED,
             args:    { recipient: address },
             fromBlock: 0n,

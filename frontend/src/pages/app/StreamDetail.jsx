@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useReadContract, useAccount } from 'wagmi';
+import { useReadContract, useAccount, useChainId } from 'wagmi';
 import { formatUnits } from 'viem';
-import { CONTRACT_ADDRESS, ROUTER_ABI } from '../../lib/wagmi';
+import { getContractAddress, ROUTER_ABI } from '../../lib/wagmi';
 import { useProfile } from '../../hooks/useProfile';
 import LiveBalance from '../../components/LiveBalance';
 import WithdrawModal from '../../components/WithdrawModal';
@@ -22,12 +22,13 @@ export default function StreamDetail() {
   const navigate   = useNavigate();
   const { address } = useAccount();
   const { profile } = useProfile(address);
+  const chainId    = useChainId();
 
   const [showWithdraw, setShowWithdraw] = useState(false);
   const [copied, setCopied]             = useState(false);
 
   const { data: stream, isLoading } = useReadContract({
-    address:      CONTRACT_ADDRESS,
+    address:      getContractAddress(chainId),
     abi:          ROUTER_ABI,
     functionName: 'streams',
     args:         [id],

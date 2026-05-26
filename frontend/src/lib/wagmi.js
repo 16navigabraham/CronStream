@@ -15,7 +15,19 @@ export const robinhoodTestnet = defineChain({
   testnet: true,
 });
 
-export const CONTRACT_ADDRESS = '0x3feb14d164EaA05a85e0276321E4F090a03549f9';
+// Contract addresses per chain — updated after redeployment with Pausable + balance delta
+export const CONTRACT_ADDRESSES = {
+  421614: '0x12B1c71A60CBC3Fdd44D3D974546D2751feC04eD', // Arbitrum Sepolia
+  46630:  '0xfB9A00926eC7716626DA9b960F0fb75ff58dCBFA', // Robinhood Chain
+};
+
+/** Resolve the correct contract address for a given chainId (falls back to Arbitrum Sepolia). */
+export function getContractAddress(chainId) {
+  return CONTRACT_ADDRESSES[chainId] ?? CONTRACT_ADDRESSES[421614];
+}
+
+// Legacy export — keeps any existing imports working, defaults to Arbitrum Sepolia
+export const CONTRACT_ADDRESS = CONTRACT_ADDRESSES[421614];
 
 export const ROUTER_ABI = [
   'function createStream(address recipient, address token, uint256 ratePerSecond, uint256 initialDurationSeconds) external returns (bytes32)',

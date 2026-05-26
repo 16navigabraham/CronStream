@@ -234,13 +234,29 @@ export default function Landing() {
       <section className="border-y border-border bg-surface">
         <div className="max-w-6xl mx-auto px-6 py-8 grid grid-cols-2 sm:grid-cols-4 gap-8 text-center">
           {[
-            { val: 'Arbitrum Sepolia',  label: 'Chain 1' },
-            { val: 'Robinhood Chain',   label: 'Chain 2' },
-            { val: '4 Sources',         label: 'GitHub · Jira · Bitbucket · Figma' },
-            { val: '0.5%',              label: 'Protocol Fee' },
+            {
+              val: (
+                <span className="flex items-center justify-center gap-2">
+                  <img src="/arb.png" alt="Arbitrum" className="w-5 h-5 rounded-full object-contain" />
+                  Arbitrum Sepolia
+                </span>
+              ),
+              label: 'Chain 1',
+            },
+            {
+              val: (
+                <span className="flex items-center justify-center gap-2">
+                  <img src="/robinhood.png" alt="Robinhood" className="w-5 h-5 rounded-full object-contain" />
+                  Robinhood Chain
+                </span>
+              ),
+              label: 'Chain 2',
+            },
+            { val: '4 Sources', label: 'GitHub · Jira · Bitbucket · Figma' },
+            { val: '0.5%',      label: 'Protocol Fee' },
           ].map(({ val, label }) => (
             <div key={label}>
-              <div className="font-mono text-xl font-semibold text-white">{val}</div>
+              <div className="font-mono text-xl font-semibold text-white flex items-center justify-center">{val}</div>
               <div className="text-muted text-xs uppercase tracking-widest mt-1">{label}</div>
             </div>
           ))}

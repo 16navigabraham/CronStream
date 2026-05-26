@@ -1,13 +1,15 @@
 import { useState, useEffect } from 'react';
-import { useWriteContract, useWaitForTransactionReceipt, useReadContract } from 'wagmi';
+import { useWriteContract, useWaitForTransactionReceipt, useReadContract, useChainId } from 'wagmi';
 import { parseUnits, formatUnits } from 'viem';
-import { CONTRACT_ADDRESS, ROUTER_ABI } from '../lib/wagmi';
+import { getContractAddress, ROUTER_ABI } from '../lib/wagmi';
+import Watermark from './Watermark';
 
 export default function WithdrawModal({ stream, onClose, onSuccess }) {
   const { streamId, ratePerSecond, streamValidUntil, recipient } = stream;
+  const chainId = useChainId();
 
   const { data: balance, refetch: refetchBalance } = useReadContract({
-    address:      CONTRACT_ADDRESS,
+    address:      getContractAddress(chainId),
     abi:          ROUTER_ABI,
     functionName: 'balanceOf',
     args:         [streamId],
@@ -41,7 +43,7 @@ export default function WithdrawModal({ stream, onClose, onSuccess }) {
     setError('');
 
     writeContract({
-      address:      CONTRACT_ADDRESS,
+      address:      getContractAddress(chainId),
       abi:          ROUTER_ABI,
       functionName: 'withdrawFromStream',
       args:         [streamId, parseUnits(amount, 6)],
@@ -53,7 +55,7 @@ export default function WithdrawModal({ stream, onClose, onSuccess }) {
 
   return (
     <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="modal-panel w-full sm:max-w-md max-h-[90vh] overflow-y-auto">
+      <div className="modal-panel w-full sm:max-w-md max-h-[90vh] overflow-y-auto relative overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-border">
           <div>
@@ -134,6 +136,7 @@ export default function WithdrawModal({ stream, onClose, onSuccess }) {
             </form>
           )}
         </div>
+        <Watermark variant="modal" />
       </div>
     </div>
   );

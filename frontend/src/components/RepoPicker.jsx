@@ -92,19 +92,20 @@ export default function RepoPicker({ githubHandle, value, onChange }) {
 
       {!value && (
         <>
-          {/* Search */}
-          <div className="relative">
+          {/* Search / loading row */}
+          {loading ? (
+            <div className="input flex items-center gap-3 cursor-default">
+              <div className="w-4 h-4 shrink-0 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+              <span className="text-sm text-muted">Fetching repos…</span>
+            </div>
+          ) : (
             <input
               value={query}
               onChange={e => setQuery(e.target.value)}
-              placeholder={loading ? 'Loading repos…' : `Search ${githubHandle}'s repos…`}
+              placeholder={`Search ${githubHandle}'s repos…`}
               className="input"
-              disabled={loading}
             />
-            {loading && (
-              <div className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-            )}
-          </div>
+          )}
 
           {/* Repo list */}
           {filtered.length > 0 && (

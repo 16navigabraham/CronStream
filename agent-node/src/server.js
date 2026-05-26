@@ -42,6 +42,7 @@ app.use((req, _res, next) => {
 // against the original request bytes.
 app.use(
   express.json({
+    limit: '5mb',   // raised from 100kb default — profile payloads can include base64 avatars
     verify: (req, _res, buf) => {
       // buf is a Buffer when content-type is application/json
       // Guard against edge cases where buf may be undefined

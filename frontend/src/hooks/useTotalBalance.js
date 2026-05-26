@@ -1,14 +1,15 @@
-import { useReadContracts } from 'wagmi';
+import { useReadContracts, useChainId } from 'wagmi';
 import { formatUnits } from 'viem';
-import { CONTRACT_ADDRESS, ROUTER_ABI } from '../lib/wagmi';
+import { getContractAddress, ROUTER_ABI } from '../lib/wagmi';
 
 /**
  * Sums balanceOf(streamId) across all provided stream IDs.
  * Returns { total (formatted string), raw (BigInt), isLoading }
  */
 export function useTotalBalance(streamIds = [], decimals = 6) {
+  const chainId = useChainId();
   const calls = streamIds.map(id => ({
-    address:      CONTRACT_ADDRESS,
+    address:      getContractAddress(chainId),
     abi:          ROUTER_ABI,
     functionName: 'balanceOf',
     args:         [id],

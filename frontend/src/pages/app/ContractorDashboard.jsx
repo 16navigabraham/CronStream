@@ -1,17 +1,18 @@
 import { useEffect, useState, useRef } from 'react';
-import { useAccount } from 'wagmi';
+import { useAccount, useChainId } from 'wagmi';
 import { useReadContracts } from 'wagmi';
 import { formatUnits } from 'viem';
 import { useProfile }     from '../../hooks/useProfile';
 import { useStreams }     from '../../hooks/useStreams';
 import { useAgentStatus } from '../../hooks/useAgentStatus';
-import { CONTRACT_ADDRESS, ROUTER_ABI } from '../../lib/wagmi';
+import { getContractAddress, ROUTER_ABI } from '../../lib/wagmi';
 import StreamCard from '../../components/StreamCard';
 
 // ─── Live total ticker (sums all stream balances) ────────────────────────────
 function TotalEarningsTicker({ streamIds }) {
+  const chainId = useChainId();
   const calls = streamIds.map(id => ({
-    address: CONTRACT_ADDRESS, abi: ROUTER_ABI, functionName: 'balanceOf', args: [id],
+    address: getContractAddress(chainId), abi: ROUTER_ABI, functionName: 'balanceOf', args: [id],
   }));
 
   const { data } = useReadContracts({
