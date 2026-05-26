@@ -56,13 +56,6 @@ function Section({ title, desc, action, children }) {
   );
 }
 
-// ─── Derived API key — base64(address), reversible by the server ─────────────
-function deriveApiKey(address) {
-  if (!address) return null;
-  // btoa(wallet address) — server decodes this to verify the caller
-  const encoded = btoa(address.toLowerCase()).replace(/=/g, '');
-  return `cs_live_${encoded}`;
-}
 
 // ─── Read-only field display ─────────────────────────────────────────────────
 function FieldView({ label, value, prefix }) {
@@ -379,10 +372,9 @@ export default function Settings() {
   const role      = profile?.role ?? '';
   const isCompany = role === 'company';
 
-  // Active key: stored (generated) takes priority, else derived from wallet
-  const activeKey  = storedKey || deriveApiKey(address);
-  const hasKey     = !!activeKey;
-  const isGenerated = !!storedKey;
+  const activeKey   = storedKey ?? null;
+  const hasKey      = !!activeKey;
+  const isGenerated = !!activeKey;
 
   function generateKey() {
     const chars  = 'abcdefghijklmnopqrstuvwxyz0123456789';
@@ -455,7 +447,7 @@ export default function Settings() {
     ? form.name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
     : address?.slice(2, 4).toUpperCase() ?? '??';
 
-  const maskedKey = activeKey ? `${activeKey.slice(0, 12)}${'•'.repeat(20)}` : '—';
+  const maskedKey = activeKey ? `${activeKey.slice(0, 14)}${'•'.repeat(20)}` : '';
 
   return (
     <div className="p-4 sm:p-6 w-full">
@@ -680,33 +672,38 @@ export default function Settings() {
           {/* API Keys */}
           <Section
             title="API Keys"
-            desc="Use your API key to authenticate requests to the CronStream agent. Keep it secret,treat it like a password."
+            desc="Use your API key to authenticate requests to the CronStream agent. Keep it secret — treat it like a password."
           >
-            {/* Single merged key block */}
+            {/* Key display block */}
             <div className="bg-dark border border-border rounded-xl overflow-hidden">
               <div className="flex items-center justify-between px-4 py-3 border-b border-border">
                 <div className="flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-accent" />
-                  <span className="text-sm font-medium">Live key</span>
+                  <span className={`w-2 h-2 rounded-full ${hasKey && keyState !== 'deleted' ? 'bg-accent' : 'bg-border'}`} />
+                  <span className="text-sm font-medium">{hasKey && keyState !== 'deleted' ? 'Live key' : 'No active key'}</span>
                 </div>
-                <div className="flex items-center gap-3">
-                  <button onClick={() => setKeyVis(v => !v)}
-                    className="text-xs text-muted hover:text-white transition-colors font-mono">
-                    {keyVis ? 'Hide' : 'Reveal'}
-                  </button>
-                  <button onClick={() => activeKey && navigator.clipboard.writeText(`Bearer ${activeKey}`)}
-                    className="text-xs text-accent hover:text-accent/80 transition-colors font-mono">
-                    Copy
-                  </button>
-                </div>
+                {hasKey && keyState !== 'deleted' && (
+                  <div className="flex items-center gap-3">
+                    <button onClick={() => setKeyVis(v => !v)}
+                      className="text-xs text-muted hover:text-white transition-colors font-mono">
+                      {keyVis ? 'Hide' : 'Reveal'}
+                    </button>
+                    <button onClick={() => navigator.clipboard.writeText(`Bearer ${activeKey}`)}
+                      className="text-xs text-accent hover:text-accent/80 transition-colors font-mono">
+                      Copy
+                    </button>
+                  </div>
+                )}
               </div>
-              <div className="px-4 py-3 font-mono text-xs text-white flex items-center gap-2">
+              <div className="px-4 py-3 font-mono text-xs flex items-center gap-2">
                 <svg className="w-3.5 h-3.5 text-muted shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
                 </svg>
-                {keyState === 'deleted'
-                  ? <span className="text-muted italic">No active key — generate one below</span>
-                  : <span className="break-all"><span className="text-muted">Authorization: </span>Bearer {keyVis ? activeKey : maskedKey}</span>
+                {!hasKey || keyState === 'deleted'
+                  ? <span className="text-muted italic">Generate a key to start making API requests</span>
+                  : <span className="break-all text-white">
+                      <span className="text-muted">Authorization: </span>
+                      Bearer {keyVis ? activeKey : maskedKey}
+                    </span>
                 }
               </div>
             </div>
@@ -716,7 +713,7 @@ export default function Settings() {
               <button onClick={generateKey}
                 className="flex-1 py-2.5 px-4 rounded-xl border border-border text-sm font-medium
                   hover:border-accent/40 hover:text-accent transition-colors text-muted text-center">
-                {isGenerated ? 'Regenerate key' : 'Generate new key'}
+                {hasKey && keyState !== 'deleted' ? 'Regenerate key' : 'Generate key'}
               </button>
               {hasKey && keyState !== 'deleted' && (
                 keyState === 'confirming-delete' ? (

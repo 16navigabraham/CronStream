@@ -25,9 +25,12 @@ import { startStreamListeners } from './streamListener.js';
 const app = express();
 
 // ─── Security headers (Helmet) ────────────────────────────────────────────────
+// This is a public API server — disable policies that block cross-origin reads.
 app.use(helmet({
-  contentSecurityPolicy: false, // API server — no HTML served
-  crossOriginEmbedderPolicy: false,
+  contentSecurityPolicy:        false, // no HTML served
+  crossOriginEmbedderPolicy:    false, // not an embedder
+  crossOriginResourcePolicy:    false, // must allow cross-origin fetch from frontend
+  crossOriginOpenerPolicy:      false,
 }));
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
@@ -148,7 +151,7 @@ app.get('/health', async (req, res) => {
   try { getSignerAddress(); signerOk = true; } catch { /* no key */ }
   try {
     balances = await getAllBalances();
-    anyLowBalance = Object.values(balances).some(b => b !== 'unavailable' && parseFloat(b) < 0.01);
+    anyLowBalance = Object.values(balances).some(b => b !== 'unavailable' && parseFloat(b) < 0.005);
   } catch { /* rpc unavailable */ }
 
   const status = (!signerOk || anyLowBalance) ? 'degraded' : 'ok';
