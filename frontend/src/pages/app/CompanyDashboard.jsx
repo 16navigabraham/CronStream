@@ -15,24 +15,30 @@ function ContractorSearch({ onSelect }) {
   const [query,   setQuery]   = useState('');
   const [results, setResults] = useState([]);
   const [status,  setStatus]  = useState('idle'); // idle | loading | done | error
+  const [errMsg,  setErrMsg]  = useState('');
 
   async function handleSearch(e) {
     e.preventDefault();
     if (!query.trim()) return;
     setStatus('loading');
     setResults([]);
+    setErrMsg('');
     try {
       const res = await fetch(`${AGENT_URL}/api/v1/contractor/lookup?q=${encodeURIComponent(query.trim())}`);
-      if (!res.ok) throw new Error('lookup failed');
+      if (res.status === 429) { setErrMsg('Too many requests — wait a moment and try again.'); setStatus('error'); return; }
+      if (res.status === 503 || res.status === 502) { setErrMsg('Agent is starting up — try again in a few seconds.'); setStatus('error'); return; }
+      if (!res.ok) { setErrMsg(`Server error (${res.status}) — try again.`); setStatus('error'); return; }
       const { results: rows } = await res.json();
       setResults(rows);
       setStatus('done');
-    } catch {
+    } catch (err) {
+      const isOffline = err.message?.includes('fetch') || err.message?.includes('network') || err.name === 'TypeError';
+      setErrMsg(isOffline ? 'Cannot reach the agent — it may be starting up. Try again in a few seconds.' : 'Unexpected error — try again.');
       setStatus('error');
     }
   }
 
-  function clear() { setQuery(''); setResults([]); setStatus('idle'); }
+  function clear() { setQuery(''); setResults([]); setStatus('idle'); setErrMsg(''); }
 
   return (
     <div className="card mb-6">
@@ -57,7 +63,7 @@ function ContractorSearch({ onSelect }) {
         <p className="text-muted text-sm mt-3">No contractors found. They need to set up a CronStream profile first.</p>
       )}
       {status === 'error' && (
-        <p className="text-red-400 text-sm mt-3">Search failed — check agent connection.</p>
+        <p className="text-red-400 text-sm mt-3">{errMsg}</p>
       )}
 
       {results.length > 0 && (

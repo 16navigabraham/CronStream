@@ -123,6 +123,17 @@ function getVoucherExpiry() {
 
 // ─── Health Check ─────────────────────────────────────────────────────────────
 
+// ─── Root ─────────────────────────────────────────────────────────────────────
+app.get('/', (_req, res) => {
+  res.json({
+    name:    'CronStream Agent Node',
+    version: '1.0.0',
+    status:  'ok',
+    docs:    '/api/public/info',
+    health:  '/health',
+  });
+});
+
 // ─── Public API (x402 pay-per-call) ──────────────────────────────────────────
 app.use('/api/public', publicApiRouter);
 

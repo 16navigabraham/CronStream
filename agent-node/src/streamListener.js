@@ -53,26 +53,38 @@ async function startChainListener(chainId, config) {
   const contract = new ethers.Contract(address, ROUTER_ABI, provider);
 
   // ── Catch-up: replay missed events since last restart ──────────────────────
-  try {
-    const latestBlock = await provider.getBlockNumber();
-    // Look back at most 10,000 blocks (~few hours on Arbitrum) to avoid RPC limits
-    const fromBlock   = Math.max(0, latestBlock - 10_000);
+  // Try progressively smaller block ranges to handle free-tier RPC limits.
+  const latestBlock = await provider.getBlockNumber();
+  const RANGES = [10_000, 1_000, 100, 10]; // shrink until the RPC accepts it
 
-    console.log(`[listener:${config.name}] Scanning blocks ${fromBlock}–${latestBlock} for missed StreamCreated events…`);
-
-    const pastEvents = await contract.queryFilter(
-      contract.filters.StreamCreated(),
-      fromBlock,
-      latestBlock,
-    );
-
-    for (const evt of pastEvents) {
-      await handleStreamCreated(chainId, config.name, evt);
+  let caught = false;
+  for (const range of RANGES) {
+    const fromBlock = Math.max(0, latestBlock - range);
+    try {
+      console.log(`[listener:${config.name}] Scanning blocks ${fromBlock}–${latestBlock} for missed events…`);
+      const pastEvents = await contract.queryFilter(
+        contract.filters.StreamCreated(),
+        fromBlock,
+        latestBlock,
+      );
+      for (const evt of pastEvents) {
+        await handleStreamCreated(chainId, config.name, evt);
+      }
+      console.log(`[listener:${config.name}] ✓ Catch-up complete — ${pastEvents.length} event(s) in last ${range} blocks`);
+      caught = true;
+      break;
+    } catch (err) {
+      const isRangeError = err.message?.includes('block range') || err.code === 'UNKNOWN_ERROR';
+      if (isRangeError && range > 10) {
+        console.warn(`[listener:${config.name}] Block range ${range} too large for this RPC — retrying with ${RANGES[RANGES.indexOf(range) + 1]}…`);
+        continue;
+      }
+      console.warn(`[listener:${config.name}] Catch-up skipped (non-fatal):`, err.shortMessage ?? err.message);
+      break;
     }
-
-    console.log(`[listener:${config.name}] ✓ Catch-up complete — ${pastEvents.length} events replayed`);
-  } catch (err) {
-    console.warn(`[listener:${config.name}] Catch-up failed (non-fatal):`, err.message);
+  }
+  if (!caught) {
+    console.warn(`[listener:${config.name}] Could not replay past events — live listener will catch new ones`);
   }
 
   // ── Live subscription ──────────────────────────────────────────────────────
