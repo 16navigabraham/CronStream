@@ -659,11 +659,11 @@ app.get('/api/v1/contractor/lookup', async (req, res) => {
   }
 });
 
-// ─── GET /api/v1/profile/:username ───────────────────────────────────────────
-// Public contractor profile — used by the /p/:username frontend route.
+// ─── GET /api/v1/u/:username ─────────────────────────────────────────────────
+// Public contractor profile by username — used by the /p/:username frontend route.
 // Returns only public fields; never returns api_key or encrypted credentials.
 
-app.get('/api/v1/profile/:username', async (req, res) => {
+app.get('/api/v1/u/:username', async (req, res) => {
   const { username } = req.params;
   if (!username || username.length < 2) {
     return res.status(400).json({ error: 'Invalid username' });

@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
-import { useAccount } from 'wagmi';
+import { useAccount, useDisconnect } from 'wagmi';
+import { LayoutDashboard, Settings, Plus, LogOut } from 'lucide-react';
 import { useProfile } from '../hooks/useProfile';
 import { useCreateStream } from '../context/CreateStreamContext';
 import CreateStreamModal from './CreateStreamModal';
 import Watermark         from './Watermark';
+import { LimelightNav }  from './LimelightNav';
 
 const CHAIN_ICONS = {
   421614: '/arb.png',        // Arbitrum Sepolia
@@ -17,6 +19,7 @@ export default function AppShell() {
   const { profile }        = useProfile(address);
   const navigate           = useNavigate();
   const { openModal }      = useCreateStream();
+  const { disconnect }     = useDisconnect();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const isCompany    = profile?.role === 'company';
@@ -24,9 +27,15 @@ export default function AppShell() {
 
   const NAV = [
     { to: '/app/dashboard', label: 'Dashboard', icon: '⬡', show: true },
-    { to: '/app/withdraw',  label: 'Withdraw',  icon: '↓', show: isContractor },
     { to: '/app/settings',  label: 'Settings',  icon: '⚙', show: true },
   ].filter(n => n.show);
+
+  // Limelight nav items for mobile
+  const mobileNavItems = [
+    { id: 'dashboard', to: '/app/dashboard', label: 'Dashboard', icon: <LayoutDashboard /> },
+    ...(isCompany ? [{ id: 'stream', label: 'Stream', icon: <Plus />, onClick: openModal }] : []),
+    { id: 'settings',  to: '/app/settings',  label: 'Settings',  icon: <Settings /> },
+  ];
 
   const initials = profile?.name
     ? profile.name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
@@ -103,8 +112,7 @@ export default function AppShell() {
                 </button>
 
                 {/* Profile row */}
-                <button onClick={openAccountModal} className="w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/5 transition-colors text-left">
-                  {/* Avatar */}
+                <button onClick={openAccountModal} className="w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/5 transition-colors text-left border-b border-border">
                   <div className="w-7 h-7 rounded-lg bg-accent/10 border border-accent/20 flex items-center justify-center overflow-hidden shrink-0">
                     {profile?.avatar
                       ? <img src={profile.avatar} alt="" className="w-full h-full object-cover" />
@@ -130,6 +138,15 @@ export default function AppShell() {
                       {profile.role}
                     </span>
                   )}
+                </button>
+
+                {/* Disconnect row */}
+                <button
+                  onClick={() => disconnect()}
+                  className="w-full flex items-center gap-2 px-3 py-2 hover:bg-red-500/5 transition-colors group"
+                >
+                  <LogOut className="w-3.5 h-3.5 text-muted group-hover:text-red-400 transition-colors shrink-0" />
+                  <span className="text-xs text-muted group-hover:text-red-400 transition-colors">Disconnect</span>
                 </button>
               </div>
             );
@@ -206,31 +223,10 @@ export default function AppShell() {
           <Outlet />
         </main>
 
-        {/* ── Mobile bottom tab bar ─────────────────────── */}
-        <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-20 bg-surface/95 backdrop-blur-md border-t border-border flex items-center">
-          {NAV.map(({ to, label, icon }) => (
-            <NavLink
-              key={to}
-              to={to}
-              className={({ isActive }) =>
-                `flex-1 flex flex-col items-center justify-center gap-1 py-3 text-xs font-medium transition-all
-                ${isActive ? 'text-accent' : 'text-muted'}`
-              }
-            >
-              <span className="text-base font-mono">{icon}</span>
-              <span>{label}</span>
-            </NavLink>
-          ))}
-          {isCompany && (
-            <button
-              onClick={openModal}
-              className="flex-1 flex flex-col items-center justify-center gap-1 py-3 text-xs font-medium text-accent"
-            >
-              <span className="text-base font-mono w-7 h-7 bg-accent text-dark rounded-lg flex items-center justify-center">+</span>
-              <span>Stream</span>
-            </button>
-          )}
-        </nav>
+        {/* ── Mobile bottom tab bar — limelight ────────── */}
+        <div className="lg:hidden fixed bottom-0 left-0 right-0 z-20 bg-surface/95 backdrop-blur-md border-t border-border">
+          <LimelightNav items={mobileNavItems} />
+        </div>
       </div>
 
       {/* Tiled page watermark — z-index 0, sits behind everything */}

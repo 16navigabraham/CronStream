@@ -8,7 +8,6 @@ import PublicProfile from './pages/PublicProfile';
 import Setup        from './pages/app/Setup';
 import Dashboard    from './pages/app/Dashboard';
 import StreamDetail from './pages/app/StreamDetail';
-import Withdraw     from './pages/app/Withdraw';
 import Settings     from './pages/app/Settings';
 import AppShell     from './components/AppShell';
 import LogoLoader   from './components/LogoLoader';
@@ -42,7 +41,7 @@ export default function App() {
         {/* /app/stream/create now opens the modal — redirect to dashboard */}
         <Route path="stream/create" element={<Navigate to="/app/dashboard" replace />} />
         <Route path="stream/:id"    element={<StreamDetail />} />
-        <Route path="withdraw"      element={<Withdraw />} />
+        <Route path="withdraw"      element={<Navigate to="/app/dashboard" replace />} />
         <Route path="settings"      element={<Settings />} />
       </Route>
 
