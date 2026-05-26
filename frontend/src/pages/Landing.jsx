@@ -1,7 +1,172 @@
 import { useNavigate } from 'react-router-dom';
 import { useAccount } from 'wagmi';
 import { useConnectModal } from '@rainbow-me/rainbowkit';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+
+const AGENT_URL = import.meta.env.VITE_AGENT_URL ?? 'http://localhost:3000';
+
+function WaitlistSection() {
+  const [email,       setEmail]       = useState('');
+  const [role,        setRole]        = useState('company');
+  const [companyName, setCompanyName] = useState('');
+  const [state,       setState]       = useState('idle'); // idle | loading | success | duplicate | error
+  const [inviteCode,  setInviteCode]  = useState('');
+  const [copied,      setCopied]      = useState(false);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!email) return;
+    setState('loading');
+    try {
+      const res = await fetch(`${AGENT_URL}/api/v1/waitlist`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ email, role, companyName }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setState(data.alreadyRegistered ? 'duplicate' : 'error');
+        return;
+      }
+      if (data.inviteCode) setInviteCode(data.inviteCode);
+      setState('success');
+    } catch {
+      setState('error');
+    }
+  }
+
+  async function copyCode() {
+    if (!inviteCode) return;
+    try {
+      await navigator.clipboard.writeText(inviteCode);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // fallback silent fail
+    }
+  }
+
+  if (state === 'success') {
+    return (
+      <section className="py-24 px-6 border-t border-border">
+        <div className="max-w-xl mx-auto text-center">
+          <div className="w-14 h-14 rounded-2xl bg-accent/10 border border-accent/30 flex items-center justify-center mx-auto mb-6">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+              <path d="M5 13l4 4L19 7" stroke="#00D4AA" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </div>
+          <h2 className="text-2xl font-bold mb-2">You're on the list.</h2>
+          <p className="text-muted text-sm mb-8">
+            Check your inbox — we've sent your invite code. We'll reach out when access opens.
+          </p>
+
+          {inviteCode && (
+            <div className="mt-2 mb-8">
+              <p className="text-xs font-mono text-muted uppercase tracking-widest mb-3">Your invite code</p>
+              <button
+                onClick={copyCode}
+                className="group inline-flex items-center gap-3 px-6 py-4 rounded-2xl bg-accent/5 border border-accent/20 hover:bg-accent/10 hover:border-accent/40 transition-all cursor-pointer mx-auto"
+              >
+                <span className="font-mono text-2xl font-bold tracking-[0.15em] text-accent">{inviteCode}</span>
+                <span className="text-muted group-hover:text-accent transition-colors">
+                  {copied ? (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                      <path d="M5 13l4 4L19 7" stroke="#00D4AA" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  ) : (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                      <rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" strokeWidth="1.8"/>
+                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+                    </svg>
+                  )}
+                </span>
+              </button>
+              <p className="text-xs text-muted mt-3">Share this with your team — they'll skip the queue.</p>
+            </div>
+          )}
+
+          <p className="text-xs text-muted">In the meantime, the app is live on testnet.</p>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="py-24 px-6 border-t border-border">
+      <div className="max-w-xl mx-auto">
+        {/* Header */}
+        <div className="text-center mb-10">
+          <p className="text-xs font-mono text-accent uppercase tracking-widest mb-3">Early access</p>
+          <h2 className="text-3xl sm:text-4xl font-bold mb-3">Join the waitlist</h2>
+          <p className="text-muted text-sm leading-relaxed">
+            CronStream is opening to companies and contractors in waves.
+            Be first to automate your payroll on-chain.
+          </p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          {/* Role toggle */}
+          <div className="grid grid-cols-2 gap-2 p-1 bg-surface border border-border rounded-xl">
+            {['company', 'contractor'].map(r => (
+              <button
+                key={r}
+                type="button"
+                onClick={() => setRole(r)}
+                className={`py-2 rounded-lg text-sm font-medium transition-all capitalize
+                  ${role === r ? 'bg-accent/10 text-accent border border-accent/30' : 'text-muted hover:text-white'}`}
+              >
+                {r === 'company' ? 'I pay contractors' : 'I get paid'}
+              </button>
+            ))}
+          </div>
+
+          {/* Company name — only for companies */}
+          {role === 'company' && (
+            <input
+              type="text"
+              value={companyName}
+              onChange={e => setCompanyName(e.target.value)}
+              placeholder="Company name"
+              className="input"
+            />
+          )}
+
+          {/* Email */}
+          <input
+            type="email"
+            value={email}
+            onChange={e => setEmail(e.target.value)}
+            placeholder="Work email"
+            required
+            className="input"
+          />
+
+          {state === 'duplicate' && (
+            <p className="text-accent text-sm text-center">You're already on the list.</p>
+          )}
+          {state === 'error' && (
+            <p className="text-red-400 text-sm text-center">Something went wrong. Try again.</p>
+          )}
+
+          <button
+            type="submit"
+            disabled={state === 'loading' || !email}
+            className="btn-primary py-3 text-base disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {state === 'loading' ? (
+              <span className="flex items-center justify-center gap-2">
+                <span className="w-4 h-4 border-2 border-dark border-t-transparent rounded-full animate-spin" />
+                Joining…
+              </span>
+            ) : 'Request access'}
+          </button>
+
+          <p className="text-center text-xs text-muted">No spam. No credit card. Unsubscribe any time.</p>
+        </form>
+      </div>
+    </section>
+  );
+}
 import { useProfile } from '../hooks/useProfile';
 import StreamBackground from '../components/StreamBackground';
 import FlowDiagram from '../components/FlowDiagram';
@@ -389,6 +554,9 @@ export default function Landing() {
           </button>
         </div>
       </section>
+
+      {/* Waitlist */}
+      <WaitlistSection />
 
       {/* Footer */}
       <footer className="border-t border-border py-8 px-6">

@@ -15,7 +15,7 @@ import crypto  from 'crypto';
 import { verifyMilestone, VerificationError } from './verifyMilestone.js';
 import { signExtensionVoucher, getSignerAddress } from './agentSigner.js';
 import { submitExtension, getAllBalances }                    from './chainSubmitter.js';
-import { initDb, isAlreadyProcessed, recordExtension, getExtensionCount, registerStream, getStream, getDb, upsertProfile, getProfile, getProfileByApiKey, searchProfiles, isUsernameTaken } from './db.js';
+import { initDb, isAlreadyProcessed, recordExtension, getExtensionCount, registerStream, getStream, getDb, upsertProfile, getProfile, getProfileByApiKey, searchProfiles, isUsernameTaken, addToWaitlist, getWaitlistCount } from './db.js';
 import { publicProfile } from './encryption.js';
 
 const app = express();
@@ -679,6 +679,107 @@ app.get('/api/v1/stream-status/:streamId', async (req, res) => {
   } catch (err) {
     console.error('[stream-status] Error:', err);
     return res.status(500).json({ error: 'Failed to fetch stream status' });
+  }
+});
+
+// ─── Waitlist email helper ────────────────────────────────────────────────────
+
+function generateInviteCode(email) {
+  // Deterministic short code: first 4 chars of sha256(email + secret)
+  const secret = process.env.INVITE_CODE_SECRET ?? 'cronstream';
+  const hash   = crypto.createHmac('sha256', secret).update(email).digest('hex');
+  return 'CS-' + hash.slice(0, 6).toUpperCase();
+}
+
+async function sendWaitlistEmail({ email, role, inviteCode, position }) {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    console.warn('[waitlist] RESEND_API_KEY not set — skipping confirmation email');
+    return;
+  }
+
+  const roleLabel = role === 'contractor' ? 'contractor' : 'company';
+  const html = `
+    <div style="font-family:system-ui,sans-serif;max-width:520px;margin:0 auto;background:#0A0A0F;color:#fff;padding:40px 32px;border-radius:16px;border:1px solid #1E1E2E">
+      <img src="https://cronstream.xyz/logo.png" width="40" style="border-radius:8px;margin-bottom:24px" />
+      <h1 style="font-size:22px;font-weight:700;margin:0 0 8px">You're on the list.</h1>
+      <p style="color:#8888AA;font-size:14px;line-height:1.6;margin:0 0 28px">
+        Thanks for joining the CronStream waitlist as a <strong style="color:#fff">${roleLabel}</strong>.
+        We're opening access in waves — you'll be among the first to automate payroll on-chain.
+      </p>
+
+      <div style="background:#12121E;border:1px solid #1E1E2E;border-radius:12px;padding:20px 24px;margin-bottom:28px">
+        <p style="color:#8888AA;font-size:11px;text-transform:uppercase;letter-spacing:0.1em;margin:0 0 6px">Your invite code</p>
+        <p style="font-family:monospace;font-size:22px;font-weight:700;color:#00D4AA;margin:0;letter-spacing:0.08em">${inviteCode}</p>
+        <p style="color:#8888AA;font-size:12px;margin:8px 0 0">Share this code with your team or contractors — they'll skip the queue.</p>
+      </div>
+
+      <p style="color:#8888AA;font-size:13px;margin:0 0 20px">
+        While you wait, the app is live on testnet at
+        <a href="https://cronstream.xyz/app" style="color:#00D4AA;text-decoration:none">cronstream.xyz/app</a>.
+        Connect your wallet and explore.
+      </p>
+
+      <hr style="border:none;border-top:1px solid #1E1E2E;margin:28px 0" />
+      <p style="color:#555570;font-size:11px;margin:0">
+        CronStream · Programmable payroll for business<br/>
+        <a href="https://cronstream.xyz/privacy" style="color:#555570">Privacy</a> ·
+        You received this because you signed up at cronstream.xyz
+      </p>
+    </div>
+  `;
+
+  try {
+    const res = await fetch('https://api.resend.com/emails', {
+      method:  'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type':  'application/json',
+      },
+      body: JSON.stringify({
+        from:    'CronStream <hello@cronstream.xyz>',
+        to:      [email],
+        subject: `You're on the CronStream waitlist — invite code inside`,
+        html,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      console.warn('[waitlist] Email send failed:', err);
+    } else {
+      console.log(`[waitlist] ✉ Confirmation sent to ${email}`);
+    }
+  } catch (err) {
+    console.warn('[waitlist] Email error:', err.message);
+  }
+}
+
+// ─── POST /api/v1/waitlist ────────────────────────────────────────────────────
+// Public — no auth required. Accepts email + optional role + company name.
+
+app.post('/api/v1/waitlist', async (req, res) => {
+  const { email, role, companyName } = req.body;
+
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ error: 'Valid email required' });
+  }
+
+  try {
+    const result = await addToWaitlist({ email, role, companyName });
+    if (!result.inserted) {
+      return res.status(409).json({ error: 'Already on the waitlist', alreadyRegistered: true });
+    }
+    const count      = await getWaitlistCount();
+    const inviteCode = generateInviteCode(email);
+    console.log(`[waitlist] ✓ ${email} joined — position ${count} — code ${inviteCode}`);
+
+    // Fire confirmation email (non-blocking — don't fail the request if email fails)
+    sendWaitlistEmail({ email, role, inviteCode, position: count }).catch(() => {});
+
+    return res.json({ success: true, position: count, inviteCode });
+  } catch (err) {
+    console.error('[waitlist]', err);
+    return res.status(500).json({ error: 'Failed to join waitlist' });
   }
 });
 

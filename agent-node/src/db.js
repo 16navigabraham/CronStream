@@ -80,6 +80,14 @@ const SCHEMA = `
     created_at  INTEGER NOT NULL DEFAULT (unixepoch()),
     updated_at  INTEGER NOT NULL DEFAULT (unixepoch())
   );
+
+  CREATE TABLE IF NOT EXISTS waitlist (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    email        TEXT    NOT NULL UNIQUE,
+    role         TEXT,
+    company_name TEXT,
+    created_at   INTEGER NOT NULL DEFAULT (unixepoch())
+  );
 `;
 
 /**
@@ -413,4 +421,37 @@ export async function isUsernameTaken(username, excludeAddress = null) {
       : [username.toLowerCase()],
   });
   return result.rows.length > 0;
+}
+
+// ─── Waitlist ─────────────────────────────────────────────────────────────────
+
+/**
+ * Add an email to the waitlist.
+ * Returns { inserted: true } on success, { inserted: false, reason: 'duplicate' } if already signed up.
+ */
+export async function addToWaitlist({ email, role, companyName }) {
+  const db = getDb();
+  if (!db) throw new Error('Database unavailable');
+  try {
+    await db.execute({
+      sql:  'INSERT INTO waitlist (email, role, company_name) VALUES (?, ?, ?)',
+      args: [email.toLowerCase().trim(), role ?? null, companyName ?? null],
+    });
+    return { inserted: true };
+  } catch (err) {
+    if (err.message?.includes('UNIQUE') || err.message?.includes('unique')) {
+      return { inserted: false, reason: 'duplicate' };
+    }
+    throw err;
+  }
+}
+
+/**
+ * Count total waitlist signups.
+ */
+export async function getWaitlistCount() {
+  const db = getDb();
+  if (!db) return 0;
+  const result = await db.execute('SELECT COUNT(*) as count FROM waitlist');
+  return Number(result.rows[0]?.count ?? 0);
 }
