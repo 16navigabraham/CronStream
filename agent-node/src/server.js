@@ -24,6 +24,10 @@ import { startStreamListeners } from './streamListener.js';
 
 const app = express();
 
+// Render (and most cloud hosts) sit behind a reverse proxy that sets X-Forwarded-For.
+// Tell Express to trust the first proxy hop so rate-limit reads the real client IP.
+app.set('trust proxy', 1);
+
 // ─── Security headers (Helmet) ────────────────────────────────────────────────
 // This is a public API server — disable policies that block cross-origin reads.
 app.use(helmet({
@@ -330,7 +334,8 @@ app.post('/api/v1/webhook/github', sensitiveLimit, async (req, res) => {
       return res.status(401).json({ error: 'Missing X-Hub-Signature-256 header' });
     }
 
-    const rawBody = req.rawBody ?? Buffer.from(JSON.stringify(req.body));
+    const rawBody = req.rawBody
+      ?? (req.body !== undefined ? Buffer.from(JSON.stringify(req.body)) : null);
 
     if (!rawBody || !rawBody.length) {
       console.warn('[webhook] rawBody unavailable — cannot verify signature');
