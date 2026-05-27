@@ -584,7 +584,7 @@ app.post('/api/v1/profile', async (req, res) => {
   const { address, role, name, github, twitter, linkedin, farcaster, website, avatarUrl, apiKey,
     jira_url: jiraUrl, jira_email: jiraEmail, jira_token: jiraToken,
     bitbucket_workspace: bitbucketWorkspace, bitbucket_user: bitbucketUser, bitbucket_password: bitbucketPassword,
-    figma_token: figmaToken } = req.body;
+    figma_token: figmaToken, display_currency: displayCurrency } = req.body;
 
   if (!address || !/^0x[a-fA-F0-9]{40}$/.test(address)) {
     return res.status(400).json({ error: 'Valid address required' });
@@ -611,7 +611,7 @@ app.post('/api/v1/profile', async (req, res) => {
     }
 
     await upsertProfile({ address, username, role: finalRole, name, github, twitter, linkedin, farcaster, website, avatarUrl, apiKey,
-      jiraUrl, jiraEmail, jiraToken, bitbucketWorkspace, bitbucketUser, bitbucketPassword, figmaToken });
+      jiraUrl, jiraEmail, jiraToken, bitbucketWorkspace, bitbucketUser, bitbucketPassword, figmaToken, displayCurrency });
     const profile = await getProfile(address);
     // Strip credentials before sending to client
     return res.json({ profile: publicProfile(profile) });
@@ -698,6 +698,7 @@ app.post('/api/v1/register-stream', verifyApiKey, async (req, res) => {
     verificationSource,
     verificationTarget,
     recipient,
+    ratePerSecond,
     chainId: bodyChainId,
   } = req.body;
 
@@ -713,15 +714,22 @@ app.post('/api/v1/register-stream', verifyApiKey, async (req, res) => {
   }
 
   try {
+    const resolvedChainId = bodyChainId ?? 421614;
+    const contractAddress = resolvedChainId === 46630
+      ? (process.env.CONTRACT_ADDRESS_ROBINHOOD  || process.env.CONTRACT_ADDRESS || null)
+      : (process.env.CONTRACT_ADDRESS_ARB_SEPOLIA || process.env.CONTRACT_ADDRESS || null);
+
     await registerStream({
       streamId,
-      chainId:            bodyChainId ?? 421614,
+      chainId:            resolvedChainId,
       githubRepo:         verificationSource === 'github' || !verificationSource ? resolvedTarget : null,
       verificationSource: verificationSource ?? 'github',
       verificationTarget: resolvedTarget,
-      sender:             req.callerAddress ?? null,   // company's wallet from API key auth
+      sender:             req.callerAddress ?? null,
       recipient:          recipient ?? null,
+      ratePerSecond:      ratePerSecond ?? null,
       token:              null,
+      contractAddress,
     });
 
     console.log(
@@ -737,6 +745,34 @@ app.post('/api/v1/register-stream', verifyApiKey, async (req, res) => {
     console.error('[register-stream] DB error:', err);
     return res.status(500).json({ error: 'Failed to register stream' });
   }
+});
+
+// ─── GET /api/v1/stream-data/:streamId ──────────────────────────────────────
+//
+// Returns full on-chain data for a single stream — streams() struct + balanceOf.
+// Used by the StreamDetail page so it never needs a frontend RPC call.
+
+app.get('/api/v1/stream-data/:streamId', async (req, res) => {
+  const { streamId } = req.params;
+  if (!/^0x[a-fA-F0-9]{64}$/.test(streamId)) {
+    return res.status(400).json({ error: 'Invalid streamId format' });
+  }
+
+  // Try DB first for chainId — default to Arb Sepolia
+  let chainId = 421614;
+  try {
+    const dbStream = await getStream(streamId);
+    if (dbStream?.chain_id) chainId = Number(dbStream.chain_id);
+  } catch { /* DB unavailable — use default */ }
+
+  const results = await readStreamBatch([streamId], chainId);
+  const data    = results[0];
+
+  if (!data || data.sender === '0x0000000000000000000000000000000000000000') {
+    return res.status(404).json({ error: 'Stream not found' });
+  }
+
+  return res.json({ streamId, chainId, ...data });
 });
 
 // ─── GET /api/v1/stream-status/:streamId ────────────────────────────────────

@@ -9,7 +9,17 @@ import { useState, useEffect, useRef } from 'react';
  *   - API returns an error (private org, rate-limited)
  *   - User clicks "Enter manually"
  */
-export default function RepoPicker({ githubHandle, value, onChange }) {
+// Strip any URL prefix so "https://github.com/16navigabraham" → "16navigabraham"
+function normaliseHandle(raw) {
+  if (!raw) return raw;
+  return raw
+    .replace(/^https?:\/\/(www\.)?github\.com\//i, '')
+    .replace(/\/+$/, '')   // trailing slashes
+    .trim();
+}
+
+export default function RepoPicker({ githubHandle: rawHandle, value, onChange }) {
+  const githubHandle = normaliseHandle(rawHandle);
   const [repos,   setRepos]   = useState([]);
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState(null);
@@ -77,10 +87,15 @@ export default function RepoPicker({ githubHandle, value, onChange }) {
           className="input"
         />
         {githubHandle && (
-          <button type="button" onClick={() => setManual(false)}
-            className="text-xs text-muted hover:text-accent font-mono self-start transition-colors">
-            ← Browse {githubHandle}'s repos
-          </button>
+          <>
+            <button type="button" onClick={() => { setError(null); setManual(false); }}
+              className="text-xs text-muted hover:text-accent font-mono self-start transition-colors">
+              ← Browse {githubHandle}'s repos
+            </button>
+            {error && (
+              <p className="text-[10px] text-red-400 font-mono">{error}</p>
+            )}
+          </>
         )}
       </div>
     );

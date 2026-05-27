@@ -4,9 +4,10 @@ import { useAccount, useChainId } from 'wagmi';
 import { useContractReadsForChain } from '../../hooks/useContractReadsForChain';
 import { useProfile }      from '../../hooks/useProfile';
 import { useStreams }      from '../../hooks/useStreams';
+import { useStreamEvents } from '../../hooks/useStreamEvents';
 import { useAgentStatus }  from '../../hooks/useAgentStatus';
 import { useCreateStream } from '../../context/CreateStreamContext';
-import { Plus, Inbox } from 'lucide-react';
+import { Plus, Inbox, History, ArrowRight } from 'lucide-react';
 import StreamCard    from '../../components/StreamCard';
 import MagneticDock  from '../../components/MagneticDock';
 import { getContractAddress, ROUTER_ABI } from '../../lib/wagmi';
@@ -158,15 +159,20 @@ export default function CompanyDashboard() {
   const { profile }   = useProfile(address);
   const { openModal } = useCreateStream();
   const navigate      = useNavigate();
-  const { sent, loading } = useStreams();
+  const { sent, loading, refresh } = useStreams();
+  useStreamEvents(refresh);
   const { online, data: agentData } = useAgentStatus();
+
 
   // Stream chain — comes from DB via useStreams (server enriched with chain_id)
   const streamChainId = sent[0]?.chainId ?? chainId;
   const sentIds = useMemo(() => sent.map(s => s.streamId), [sent]);
 
-  // ── balanceOf reads — server gives us a snapshot balance, we refresh it here
-  //    so LiveBalance has an up-to-date anchor to tick from. ───────────────────
+  // ── Fresh on-chain reads ──────────────────────────────────────────────────
+  // balanceOf  — live claimable balance (ticks up every second while active)
+  // streams()  — full struct: gives fresh streamValidUntil, totalDeposited, etc.
+  //              Critical when data came from Blockscout/viem fallback which
+  //              doesn't include streamValidUntil → all streams appear "0 active"
   const balCalls = useMemo(() => sent.map(s => ({
     address:      getContractAddress(streamChainId),
     abi:          ROUTER_ABI,
@@ -174,18 +180,73 @@ export default function CompanyDashboard() {
     args:         [s.streamId],
   })), [sentIds, streamChainId]);
 
-  const balResults = useContractReadsForChain({
-    chainId:  streamChainId,
-    calls:    balCalls,
-    enabled:  sent.length > 0,
+  const stateCalls = useMemo(() => sent.map(s => ({
+    address:      getContractAddress(streamChainId),
+    abi:          ROUTER_ABI,
+    functionName: 'streams',
+    args:         [s.streamId],
+  })), [sentIds, streamChainId]);
+
+  const balResults   = useContractReadsForChain({
+    chainId:         streamChainId,
+    calls:           balCalls,
+    enabled:         sent.length > 0,
     refetchInterval: 10_000,
   });
 
-  // Stream struct data comes from the server (already enriched with on-chain fields).
-  // We no longer need a separate useContractReadsForChain for streams() reads.
-  // batchLoading = still waiting for useStreams to return results from the server.
-  const batchLoading = loading; // useStreams loading flag
-  const balData = balResults.length > 0 ? balResults : null;
+  const stateResults = useContractReadsForChain({
+    chainId:         streamChainId,
+    calls:           stateCalls,
+    enabled:         sent.length > 0,
+    refetchInterval: 15_000,
+  });
+
+  const batchLoading = loading;
+  const balData      = balResults.length > 0 ? balResults : null;
+
+  // Enrich: fresh balance + fresh on-chain state (streamValidUntil, totals, rate)
+  const enriched = useMemo(() =>
+    sent.map((s, i) => {
+      const state = stateResults[i];
+      return {
+        ...s,
+        rawBalance: balData?.[i] ?? s.rawBalance ?? 0n,
+        ...(state && {
+          streamValidUntil: state.streamValidUntil ?? s.streamValidUntil ?? 0n,
+          totalDeposited:   state.totalDeposited   ?? s.totalDeposited   ?? 0n,
+          totalWithdrawn:   state.totalWithdrawn   ?? s.totalWithdrawn   ?? 0n,
+          ratePerSecond:    state.ratePerSecond     ?? s.ratePerSecond    ?? 0n,
+        }),
+      };
+    }),
+  [balData, stateResults, sent]);
+
+  const nowSec = Math.floor(Date.now() / 1000);
+
+  // Active = still streaming right now
+  const activeStreams = useMemo(() =>
+    enriched.filter(e => e.streamValidUntil && Number(e.streamValidUntil) > nowSec),
+  [enriched]);
+
+  // Completed from company's perspective = all expired streams.
+  // Whether the contractor has withdrawn their earned funds is their own responsibility.
+  const completedStreams = useMemo(() =>
+    enriched.filter(e => !e.streamValidUntil || Number(e.streamValidUntil) <= nowSec),
+  [enriched]);
+
+  // "Reclaimable" = expired streams where the company has genuinely unearned funds
+  // (deposit > earned = contractor balance + already withdrawn). Only flagged when
+  // totalDeposited is available (i.e. stream was fetched from the agent DB or chain).
+  const reclaimableStreams = useMemo(() =>
+    enriched.filter(e => {
+      const expired   = !e.streamValidUntil || Number(e.streamValidUntil) <= nowSec;
+      if (!expired) return false;
+      const deposited = e.totalDeposited  ?? 0n;
+      if (deposited === 0n) return false;
+      const earned   = (e.rawBalance ?? 0n) + (e.totalWithdrawn ?? 0n);
+      return deposited > earned;
+    }),
+  [enriched]);
 
   function handleSelectContractor(contractor) {
     openModal({ prefill: {
@@ -205,10 +266,7 @@ export default function CompanyDashboard() {
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div className="mb-6">
-        {/* Top row: avatar + name + action button */}
         <div className="flex items-center justify-between gap-3">
-
-          {/* Left: avatar + name */}
           <div className="flex items-center gap-3 min-w-0">
             <div className="w-14 h-14 rounded-2xl bg-accent/10 border border-accent/20 flex items-center justify-center shrink-0 overflow-hidden">
               {profile?.avatar
@@ -227,7 +285,6 @@ export default function CompanyDashboard() {
                 <span className="text-[10px] px-2 py-0.5 rounded-full border border-accent/30 bg-accent/5 text-accent font-mono shrink-0">
                   company
                 </span>
-                {/* Agent dot — mobile only */}
                 {online !== null && (
                   <span
                     className={`sm:hidden w-2 h-2 rounded-full shrink-0 ${online ? 'bg-accent pulse-dot' : 'bg-muted/50'}`}
@@ -235,8 +292,6 @@ export default function CompanyDashboard() {
                   />
                 )}
               </div>
-
-              {/* Agent status pill — desktop only */}
               {online !== null && (
                 <div className={`hidden sm:inline-flex mt-1 items-center gap-1.5 text-[10px] font-mono px-2.5 py-1 rounded-full border
                   ${online ? 'border-accent/20 bg-accent/5 text-accent' : 'border-border text-muted'}`}>
@@ -246,19 +301,15 @@ export default function CompanyDashboard() {
               )}
             </div>
           </div>
-
-          {/* Right: New Stream button */}
           <button
             className="btn-primary py-2 px-3 sm:px-4 text-xs sm:text-sm shrink-0 flex items-center gap-1.5"
             onClick={() => openModal()}
           >
             <Plus size={14} />
-            <span className="hidden xs:inline">New Stream</span>
-            <span className="xs:hidden">New</span>
+            <span className="hidden sm:inline">New Stream</span>
+            <span className="sm:hidden">New</span>
           </button>
         </div>
-
-        {/* Social links via MagneticDock */}
         {(profile?.github || profile?.twitter || profile?.linkedin || profile?.farcaster || profile?.website) && (
           <div className="mt-3 ml-[52px]">
             <MagneticDock profile={profile} />
@@ -268,27 +319,65 @@ export default function CompanyDashboard() {
 
       {/* ── Stats ──────────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-        {[
-          { label: 'Streams created', value: sent.length },
-          { label: 'Active now',      value: sent.length },
-          { label: 'Extensions',      value: online ? (agentData?.extensionsServed ?? 0) : '—' },
-          { label: 'Protocol fee',    value: '0.5%' },
-        ].map(({ label, value }) => (
-          <div key={label} className="stat-card">
-            <div className="stat-value">{value}</div>
-            <div className="stat-label">{label}</div>
+        <div className="stat-card">
+          <div className="stat-value">{sent.length}</div>
+          <div className="stat-label">Streams created</div>
+        </div>
+        <div className="stat-card">
+          <div className={`stat-value ${activeStreams.length > 0 ? 'text-accent' : ''}`}>
+            {activeStreams.length}
           </div>
-        ))}
+          <div className="stat-label">Active now</div>
+          <p className="text-[10px] text-muted font-mono mt-0.5">
+            {sent.length === 0
+              ? 'no streams yet'
+              : activeStreams.length === 0
+                ? `${completedStreams.length} expired`
+                : `of ${sent.length} streams`}
+          </p>
+        </div>
+        <div className="stat-card">
+          <div className="stat-value">{online ? (agentData?.extensionsServed ?? 0) : '—'}</div>
+          <div className="stat-label">Extensions</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-value">0.5%</div>
+          <div className="stat-label">Protocol fee</div>
+        </div>
       </div>
+
+      {/* ── History shortcut (+ pending reclaim alert) ───────────────────────── */}
+      <button
+        onClick={() => navigate('/app/company-history')}
+        className="w-full card mb-6 flex items-center justify-between gap-3 hover:border-accent/30 hover:bg-accent/[0.02] transition-all text-left group"
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-xl border border-border bg-dark flex items-center justify-center text-muted group-hover:text-accent group-hover:border-accent/30 transition-colors shrink-0">
+            <History size={14} />
+          </div>
+          <div>
+            <p className="text-[10px] font-mono text-muted uppercase tracking-widest">Stream history</p>
+            <p className="text-xs text-white/70 mt-0.5">
+              {sent.length} streams · {completedStreams.length} ended
+              {reclaimableStreams.length > 0 && (
+                <span className="ml-2 text-yellow-400 font-mono">· {reclaimableStreams.length} to reclaim</span>
+              )}
+            </p>
+          </div>
+        </div>
+        <ArrowRight size={13} className="text-muted group-hover:text-accent transition-colors shrink-0" />
+      </button>
 
       {/* ── Contractor search ───────────────────────────────────────────────── */}
       <ContractorSearch onSelect={handleSelectContractor} />
 
-      {/* ── Stream list ─────────────────────────────────────────────────────── */}
-      <div>
+      {/* ── Active / pending streams ─────────────────────────────────────────── */}
+      <div className="mb-6">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-xs font-medium text-muted uppercase tracking-widest">Your streams</h2>
-          {sent.length > 0 && <span className="text-xs text-muted font-mono">{sent.length} total</span>}
+          <h2 className="text-xs font-medium text-muted uppercase tracking-widest">Active streams</h2>
+          {activeStreams.length > 0 && (
+            <span className="text-xs text-muted font-mono">{activeStreams.length} total</span>
+          )}
         </div>
 
         {loading ? (
@@ -300,38 +389,48 @@ export default function CompanyDashboard() {
               </div>
             ))}
           </div>
-        ) : sent.length === 0 ? (
+        ) : activeStreams.length === 0 ? (
           <div className="card border-dashed border-border/50 flex flex-col items-center justify-center py-14 text-center gap-3">
             <div className="w-14 h-14 rounded-2xl bg-surface border border-border flex items-center justify-center">
               <Inbox size={22} className="text-muted" />
             </div>
             <div>
-              <p className="font-medium mb-1 text-sm">No streams yet</p>
+              <p className="font-medium mb-1 text-sm">
+                {sent.length > 0 ? 'No active streams' : 'No streams yet'}
+              </p>
               <p className="text-muted text-xs max-w-xs leading-relaxed">
-                Search for a contractor above or tap New Stream to start paying per second.
+                {reclaimableStreams.length > 0
+                  ? `${reclaimableStreams.length} expired stream${reclaimableStreams.length > 1 ? 's have' : ' has'} unearned funds — go to History to reclaim them.`
+                  : sent.length > 0
+                    ? 'All streams have ended. Start a new one to begin paying.'
+                    : 'Search for a contractor above or tap New Stream to start paying per second.'}
               </p>
             </div>
             <button className="btn-primary text-sm mt-1 flex items-center gap-2" onClick={() => openModal()}>
-              <Plus size={14} /> Create first stream
+              <Plus size={14} /> Create {sent.length > 0 ? 'another' : 'first'} stream
             </button>
           </div>
         ) : (
-          <div className="flex flex-col gap-3 max-h-[560px] overflow-y-auto pr-0.5">
-            {sent.map((s, i) => (
-              <StreamCard
-                key={s.streamId}
-                streamId={s.streamId}
-                role="company"
-                chainId={s.chainId ?? streamChainId}
-                batchManaged
-                batchLoading={batchLoading}
-                streamData={toStreamData(s)}
-                rawBalance={balData?.[i] ?? s.rawBalance ?? undefined}
-              />
-            ))}
+          <div className="flex flex-col gap-3">
+            {activeStreams.map(s => {
+              const i = sent.findIndex(r => r.streamId === s.streamId);
+              return (
+                <StreamCard
+                  key={s.streamId}
+                  streamId={s.streamId}
+                  role="company"
+                  chainId={s.chainId ?? streamChainId}
+                  batchManaged
+                  batchLoading={batchLoading}
+                  streamData={toStreamData(s)}
+                  rawBalance={s.rawBalance}
+                />
+              );
+            })}
           </div>
         )}
       </div>
+
     </div>
   );
 }

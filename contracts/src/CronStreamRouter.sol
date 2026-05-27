@@ -20,14 +20,13 @@ contract CronStreamRouter is ICronStream, AccessControl, Pausable {
     bytes32 public constant PAUSER_ROLE        = keccak256("PAUSER");
 
 
- 
+
   bytes32 private constant DOMAIN_TYPEHASH = keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
 
   bytes32 private constant EXTENSION_VOUCHER_TYPEHASH = keccak256("ExtensionVoucher(bytes32 streamId,uint256 extensionDurationSeconds,uint256 nonce,uint256 expiry)");
 
    // EIP-712
-  bytes32 private immutable DOMAIN_SEPARATOR; // EIP-712 domain separator for signature verification
-
+  bytes32 private immutable DOMAIN_SEPARATOR;
 
 
 
@@ -36,25 +35,34 @@ contract CronStreamRouter is ICronStream, AccessControl, Pausable {
     address public agentSigner;
     uint256 public feeBps;
     address public feeRecipient;
-    uint256  public constant  MAX_FEE_BPS = 500 ; // Maximum fee of 5%
+    uint256  public constant  MAX_FEE_BPS = 500 ;
 
     //streams
-    mapping(bytes32 => Stream) public streams; // Mapping of streamId to Stream details
-    mapping(address => uint256) public streamNonces; // B2B nonce for stream ID
-   
+    mapping(bytes32 => Stream) public streams;
+    mapping(address => uint256) public streamNonces;
 
 
 
  struct Stream {
-        address sender;          // Corporate payroll wallet funding the stream
-        address recipient;       // Target wallet address of the active contractor
-        address token;           // Contract address of the ERC-20 stablecoin asset
-        uint256 ratePerSecond;   // Token velocity amount allocated per elapsed second
-        uint256 startTime;       // Initialization block timestamp
-        uint256 streamValidUntil;// Safety time-lock validation ceiling timestamp
-        uint256 totalDeposited;  // Gross stablecoin financing injected
-        uint256 totalWithdrawn;  // Cumulative assets claimed by the contractor
-        uint256 nonce;           // Incremental index for EIP-712 transaction tracking
+        address sender;           // Corporate payroll wallet funding the stream
+        address recipient;        // Target wallet address of the active contractor
+        address token;            // Contract address of the ERC-20 stablecoin asset
+        uint256 ratePerSecond;    // Token velocity amount allocated per elapsed second
+        uint256 startTime;        // Initialization block timestamp
+        uint256 streamValidUntil; // Safety time-lock validation ceiling timestamp
+        uint256 totalDeposited;   // Gross stablecoin financing injected (all periods)
+        uint256 totalWithdrawn;   // Cumulative assets claimed by the contractor
+        uint256 nonce;            // Incremental index for EIP-712 transaction tracking
+        // ── Locked-start / multi-period accounting ──────────────────────────────
+        // earnedSnapshot: tokens earned across ALL completed windows so far.
+        //   Updated on each re-extension (when the agent closes a dead gap and starts
+        //   a new window). Prevents dead time between expiry and re-extension from
+        //   being counted as earned time.
+        uint256 earnedSnapshot;
+        // lastWindowStart: timestamp when the current earning window began.
+        //   Set to startTime on creation; reset to block.timestamp whenever the
+        //   agent extends an already-expired stream (opens a fresh window).
+        uint256 lastWindowStart;
     }
 
 
@@ -79,7 +87,7 @@ contract CronStreamRouter is ICronStream, AccessControl, Pausable {
   }
 
 
- 
+
 modifier onlyAgentManager() {
     _onlyAgentManager();
     _;
@@ -99,9 +107,8 @@ function _onlyFeeManager() internal view {
 }
 
 
-    
 
-//events 
+//events
     event StreamCreated(bytes32 indexed streamId, address indexed sender, address indexed recipient, uint256 ratePerSecond);
     event StreamExtended(bytes32 indexed streamId, uint256 newValidUntil, uint256 newNonce);
     event WithdrawalExecuted(bytes32 indexed streamId, address indexed recipient, uint256 amount, uint256 protocolFee);
@@ -123,46 +130,62 @@ function _onlyFeeManager() internal view {
   error NotSender();
   error StreamStillActive();
   error NothingToReclaim();
-
-
-
+  error InsufficientDeposit();
 
 
     /// @notice Create a new payment stream from the caller (company) to a contractor.
-    /// @dev Computes a deterministic streamId from sender + recipient + token + nonce.
-    ///      Transfers the full budget (ratePerSecond × initialDurationSeconds) upfront.
-    ///      Uses CEI: nonce incremented and existence check before token pull.
-    /// @param recipient         Address of the contractor receiving the stream.
-    /// @param token             ERC-20 token to stream (e.g. USDC).
-    /// @param ratePerSecond     Token units released per second (e.g. 1e6 = 1 USDC/s).
-    /// @param initialDurationSeconds  Agreed contract duration in seconds.
-    /// @return streamId         Unique bytes32 identifier for this stream.
+    /// @dev    Locked-start model: pass initialDurationSeconds = 0 to create a stream that
+    ///         earns nothing until the agent issues the first extension voucher. The full
+    ///         multi-period budget is deposited upfront via depositAmount.
+    ///
+    ///         Legacy single-window: pass initialDurationSeconds > 0 and
+    ///         depositAmount = ratePerSecond * initialDurationSeconds for the original behaviour.
+    ///
+    /// @param recipient               Contractor wallet.
+    /// @param token                   ERC-20 token to stream (e.g. USDC).
+    /// @param ratePerSecond           Token units released per second.
+    /// @param initialDurationSeconds  First window length in seconds. Pass 0 for locked start
+    ///                                (stream earns nothing until first agent extension).
+    /// @param depositAmount           Total tokens to lock in the contract. Must be ≥
+    ///                                ratePerSecond × initialDurationSeconds.
+    ///                                For a locked-start multi-period stream this is
+    ///                                ratePerSecond × windowSeconds × numberOfPeriods.
+    /// @return streamId               Unique bytes32 identifier for this stream.
 
-    function createStream(address recipient,address token,uint256 ratePerSecond,uint256 initialDurationSeconds) external override whenNotPaused returns (bytes32 streamId) {
-    require (recipient != address(0), "Recipient cannot be zero address");
-    require (token != address(0), "Token cannot be zero address");
-    require (ratePerSecond > 0, "Rate per second must be greater than zero");
-    require (initialDurationSeconds > 0, "Initial duration must be greater than zero");
-    uint256 nonce = streamNonces[msg.sender];   // read current nonce 
-            streamId = keccak256(abi.encodePacked(
-              msg.sender,      // address — 20 bytes
-              recipient,       // address — 20 bytes
-              token,           // address — 20 bytes
-              nonce            // uint256 — 32 bytes 
-          ));
-      streamNonces[msg.sender]++;                 
-  //increment BEFORE writing stream (CEI)
+    function createStream(
+        address recipient,
+        address token,
+        uint256 ratePerSecond,
+        uint256 initialDurationSeconds,
+        uint256 depositAmount
+    ) external override whenNotPaused returns (bytes32 streamId) {
+        require(recipient   != address(0), "Recipient cannot be zero address");
+        require(token       != address(0), "Token cannot be zero address");
+        require(ratePerSecond > 0,         "Rate per second must be greater than zero");
+        require(depositAmount > 0,         "Deposit amount must be greater than zero");
+        // depositAmount must cover at least the initial window so the balance cap holds
+        require(
+            depositAmount >= ratePerSecond * initialDurationSeconds,
+            "Deposit must cover initial window"
+        );
 
-      if (streams[streamId].sender != address(0)) revert StreamAlreadyExists();
-        uint256 startTime = block.timestamp;
+        uint256 nonce = streamNonces[msg.sender];
+        streamId = keccak256(abi.encodePacked(
+            msg.sender,
+            recipient,
+            token,
+            nonce
+        ));
+        streamNonces[msg.sender]++;
+
+        if (streams[streamId].sender != address(0)) revert StreamAlreadyExists();
+
+        uint256 startTime        = block.timestamp;
         uint256 streamValidUntil = startTime + initialDurationSeconds;
-    
-        uint256 intendedDeposit = ratePerSecond * initialDurationSeconds;
 
-        // Balance-delta pattern — protects against fee-on-transfer / deflationary tokens.
-        // We only credit what physically arrived in the vault, not what was requested.
-        uint256 balanceBefore = IERC20(token).balanceOf(address(this));
-        IERC20(token).safeTransferFrom(msg.sender, address(this), intendedDeposit);
+        // Balance-delta pattern — credit what physically arrived, not what was requested.
+        uint256 balanceBefore  = IERC20(token).balanceOf(address(this));
+        IERC20(token).safeTransferFrom(msg.sender, address(this), depositAmount);
         uint256 actualDeposited = IERC20(token).balanceOf(address(this)) - balanceBefore;
 
         streams[streamId] = Stream({
@@ -172,31 +195,53 @@ function _onlyFeeManager() internal view {
             ratePerSecond:   ratePerSecond,
             startTime:       startTime,
             streamValidUntil: streamValidUntil,
-            totalDeposited:  actualDeposited,   // truth — not the requested amount
+            totalDeposited:  actualDeposited,
             totalWithdrawn:  0,
-            nonce:           0
+            nonce:           0,
+            earnedSnapshot:  0,
+            lastWindowStart: startTime
         });
+
         emit StreamCreated(streamId, msg.sender, recipient, ratePerSecond);
         return streamId;
-  }
+    }
 
 
 
-    /// @notice Extend an active stream's validity window using an agent-signed voucher.
-    /// @dev Validates an EIP-712 ExtensionVoucher signed by the registered agentSigner.
-    ///      Increments the on-chain stream nonce after each successful extension to
-    ///      prevent voucher replay attacks.
-    /// @param streamId                  The stream to extend.
-    /// @param extensionDurationSeconds  Seconds to add to streamValidUntil.
-    /// @param expiry                    Unix timestamp after which the voucher is invalid.
-    /// @param signature                 65-byte EIP-712 signature from the agentSigner.
+    /// @notice Extend (or reactivate) a stream using an agent-signed EIP-712 voucher.
+    /// @dev    Two modes depending on whether the stream is currently active or expired:
+    ///
+    ///         ACTIVE  (block.timestamp < streamValidUntil):
+    ///           Standard extension — adds extensionDurationSeconds to streamValidUntil.
+    ///           The earning window continues uninterrupted; no snapshot update needed.
+    ///
+    ///         EXPIRED (block.timestamp ≥ streamValidUntil) — locked-start / next period:
+    ///           1. Snapshot the tokens earned in the just-closed window:
+    ///                earnedSnapshot += (streamValidUntil - lastWindowStart) × ratePerSecond
+    ///           2. Reset lastWindowStart = block.timestamp  (new window begins NOW)
+    ///           3. Set streamValidUntil  = block.timestamp + extensionDurationSeconds
+    ///           This ensures dead time between expiry and re-extension is never counted
+    ///           as earned — the contractor only earns during verified-open windows.
+    ///
+    ///         Nonce replay protection: each successful extension increments s.nonce, so
+    ///         previously used vouchers are permanently invalidated.
+    ///
+    /// @param streamId                  Stream to extend or reactivate.
+    /// @param extensionDurationSeconds  Seconds to add to the current (or new) window.
+    /// @param expiry                    Unix timestamp after which the voucher is stale.
+    /// @param signature                 65-byte EIP-712 signature from agentSigner.
 
-    function extendStreamWindowWithSignature(bytes32 streamId, uint256 extensionDurationSeconds,  uint256 expiry, bytes calldata signature) external whenNotPaused {
+    function extendStreamWindowWithSignature(
+        bytes32 streamId,
+        uint256 extensionDurationSeconds,
+        uint256 expiry,
+        bytes calldata signature
+    ) external whenNotPaused {
         Stream storage s = streams[streamId];
         if (s.sender == address(0)) revert StreamDoesNotExist();
-        if (block.timestamp > s.streamValidUntil) revert SafetyWindowExpired();
-         if (block.timestamp > expiry) revert VoucherExpired();
-        // Verify signature
+        if (block.timestamp > expiry) revert VoucherExpired();
+
+        // Verify EIP-712 signature — nonce is stream-specific to prevent cross-stream replay
         bytes32 structHash = keccak256(abi.encode(
             EXTENSION_VOUCHER_TYPEHASH,
             streamId,
@@ -204,14 +249,30 @@ function _onlyFeeManager() internal view {
             s.nonce,
             expiry
         ));
-          bytes32 digest = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
         address signer = ECDSA.recover(digest, signature);
         if (signer != agentSigner) revert InvalidCryptographicSignature();
 
-        // Update stream with new validity and increment nonce
-        s.streamValidUntil += extensionDurationSeconds;
-        s.nonce++;
+        if (block.timestamp >= s.streamValidUntil) {
+            // ── Expired / locked-start: snapshot closed window, open fresh one ──────
+            // Tokens earned during the window that just closed (or zero for locked start).
+            uint256 windowEarned = (s.streamValidUntil - s.lastWindowStart) * s.ratePerSecond;
+            // Cap so earnedSnapshot never exceeds totalDeposited.
+            // Cannot use (totalDeposited - totalWithdrawn - earnedSnapshot) here because
+            // totalWithdrawn can exceed earnedSnapshot when the contractor withdrew from
+            // an active window (those earnings haven't been snapshotted yet).
+            uint256 maxEarnable = s.totalDeposited - s.earnedSnapshot;
+            if (windowEarned > maxEarnable) windowEarned = maxEarnable;
 
+            s.earnedSnapshot  += windowEarned;
+            s.lastWindowStart  = block.timestamp;           // new window starts now
+            s.streamValidUntil = block.timestamp + extensionDurationSeconds;
+        } else {
+            // ── Active: straightforward extension, window is continuous ─────────────
+            s.streamValidUntil += extensionDurationSeconds;
+        }
+
+        s.nonce++;
         emit StreamExtended(streamId, s.streamValidUntil, s.nonce);
     }
 
@@ -229,57 +290,43 @@ function _onlyFeeManager() internal view {
         if (msg.sender != s.recipient) revert NotRecipient();
         uint256 availableToWithdraw = _balanceOf(streamId);
         if (amount > availableToWithdraw) revert UnderflowWithdrawalLimit();
-    
-        // Calculate protocol fee
-        uint256 protocolFee = (amount * feeBps) / 10000;
+
+        uint256 protocolFee  = (amount * feeBps) / 10000;
         uint256 amountAfterFee = amount - protocolFee;
-    
-        // Update stream state before transfers (CEI)
+
+        // CEI — state before transfers
         s.totalWithdrawn += amount;
-    
-        // Transfer protocol fee to fee recipient
+
         if (protocolFee > 0) {
             IERC20(s.token).safeTransfer(feeRecipient, protocolFee);
         }
-        // Transfer remaining amount to recipient
         IERC20(s.token).safeTransfer(s.recipient, amountAfterFee);
-    
+
         emit WithdrawalExecuted(streamId, s.recipient, amountAfterFee, protocolFee);
     }
 
 
 
     /// @notice Company reclaims unearned tokens after a stream has naturally expired.
-    /// @dev Can only be called once streamValidUntil has passed. At natural expiry all
-    ///      deposited funds are fully earned, so this path is typically only useful when
-    ///      a contractor withdrew less than their full entitlement. For early termination
-    ///      use cancelStream instead.
     /// @param streamId  The expired stream to reclaim funds from.
 
     function reclaimUnearned(bytes32 streamId) external {
       Stream storage s = streams[streamId];
 
-      // only the company that created the stream
       if (msg.sender != s.sender) revert NotSender();
-
-      // stream must be expired — company can't pull funds while stream is active
       if (block.timestamp < s.streamValidUntil) revert StreamStillActive();
 
-      // what the contractor hasn't earned yet
-      uint256 earned    = _balanceOf(streamId) + s.totalWithdrawn;
-      uint256 unearned  = s.totalDeposited - earned;
+      uint256 earned   = _balanceOf(streamId) + s.totalWithdrawn;
+      uint256 unearned = s.totalDeposited - earned;
       if (unearned == 0) revert NothingToReclaim();
       s.totalDeposited -= unearned;
-      // update state before transfer (CEI)
 
       IERC20(s.token).safeTransfer(s.sender, unearned);
-
       emit UnspentFundsReclaimed(streamId, s.sender, unearned);
   }
 
     /// @notice Company cancels an active stream early, recovering unearned budget.
     /// @dev Freezes the stream at the current block by setting streamValidUntil = now.
-    ///      Unearned tokens are returned to the sender immediately via CEI pattern.
     ///      The contractor retains the right to withdraw whatever was earned up to
     ///      this point via withdrawFromStream.
     /// @param streamId  The active stream to cancel.
@@ -290,47 +337,48 @@ function _onlyFeeManager() internal view {
       if (msg.sender != s.sender) revert NotSender();
       if (block.timestamp >= s.streamValidUntil) revert SafetyWindowExpired();
 
-      // Freeze the stream at this exact moment
       s.streamValidUntil = block.timestamp;
 
-      // Compute what was earned up to now.
-      // Protocol invariant: block.timestamp < streamValidUntil (checked above) guarantees
-      // elapsed < initialDuration, so earned < totalDeposited and unearned > 0 always.
       uint256 earned   = _balanceOf(streamId) + s.totalWithdrawn;
       uint256 unearned = s.totalDeposited - earned;
 
-      s.totalDeposited -= unearned; // CEI — state before transfer
+      s.totalDeposited -= unearned;
 
       IERC20(s.token).safeTransfer(s.sender, unearned);
-
       emit UnspentFundsReclaimed(streamId, s.sender, unearned);
   }
 
 
   /// @notice Compute the withdrawable token balance for a stream at the current block.
-  /// @dev Uses min(now, streamValidUntil) so post-expiry calls still return the correct
-  ///      residual rather than growing unboundedly. Result is capped at totalDeposited.
+  /// @dev    Uses earnedSnapshot + current-window accrual so gaps between periods are
+  ///         never counted as earned time. Result is capped at (totalDeposited - totalWithdrawn).
   /// @param streamId  Stream to query.
   /// @return  Token units currently available for withdrawal.
 
   function _balanceOf(bytes32 streamId) internal view returns (uint256) {
       Stream storage s = streams[streamId];
+
+      // Clamp to window ceiling — earnings stop at streamValidUntil
       uint256 effectiveNow = block.timestamp < s.streamValidUntil
           ? block.timestamp
           : s.streamValidUntil;
-      uint256 elapsed = effectiveNow - s.startTime;
-      uint256 totalEarned = elapsed * s.ratePerSecond;
-      if (totalEarned > s.totalDeposited) totalEarned = s.totalDeposited;
+
+      // Tokens earned in the CURRENT window only (since last window reset)
+      uint256 windowEarned = (effectiveNow - s.lastWindowStart) * s.ratePerSecond;
+
+      // Total earned = all closed windows + current window
+      uint256 totalEarned = s.earnedSnapshot + windowEarned;
+
+      // Cap at what was actually deposited
+      uint256 deposited = s.totalDeposited;
+      if (totalEarned > deposited) totalEarned = deposited;
+
       return totalEarned - s.totalWithdrawn;
   }
 
-  
+
 
   /// @notice Returns the withdrawable balance for a stream (public view).
-  /// @dev Reverts if the stream does not exist. Delegates to _balanceOf internally.
-  /// @param streamId  Stream to query.
-  /// @return  Token units currently available for withdrawal.
-
   function balanceOf(bytes32 streamId) external view returns (uint256) {
       if (streams[streamId].sender == address(0)) revert StreamDoesNotExist();
       return _balanceOf(streamId);
@@ -339,30 +387,22 @@ function _onlyFeeManager() internal view {
 
 
 
-//utility 
-  /// @notice Update the agent wallet address used to verify EIP-712 extension vouchers.
-  /// @dev Restricted to AGENT_MANAGER_ROLE. Emits AgentSignerUpdated.
-  /// @param newSigner  New agent signer address (must not be zero).
-
-  function setAgentSigner(address newSigner)onlyAgentManager external {
+//utility
+  function setAgentSigner(address newSigner) onlyAgentManager external {
         if (newSigner == address(0)) revert ZeroAddress();
         address oldSigner = agentSigner;
         agentSigner = newSigner;
         emit AgentSignerUpdated(oldSigner, newSigner);
   }
 
-
-    /// @notice Update the address that receives protocol fees on each withdrawal.
-    /// @dev Restricted to FEE_MANAGER_ROLE. Emits FeeRecipientUpdated.
-    /// @param newRecipient  New fee recipient address (must not be zero).
-    
-    function setFeeRecipient(address newRecipient) onlyFeeManager external{
+    function setFeeRecipient(address newRecipient) onlyFeeManager external {
       if (newRecipient == address(0)) revert ZeroAddress();
       address oldRecipient = feeRecipient;
       feeRecipient = newRecipient;
-      emit FeeRecipientUpdated(oldRecipient, newRecipient);}
+      emit FeeRecipientUpdated(oldRecipient, newRecipient);
+    }
 
-    function setFeeBps(uint256 newFeeBps) onlyFeeManager external{
+    function setFeeBps(uint256 newFeeBps) onlyFeeManager external {
       if (newFeeBps > MAX_FEE_BPS) revert FeeBpsExceedsMax();
       uint256 oldFeeBps = feeBps;
       feeBps = newFeeBps;
@@ -374,20 +414,8 @@ function _onlyFeeManager() internal view {
 
     /// @notice Pause createStream, extendStreamWindowWithSignature, and withdrawFromStream.
     /// @dev cancelStream and reclaimUnearned remain active so companies can always
-    ///      reclaim unspent funds during an emergency. Restricted to PAUSER_ROLE.
-    function pause() external onlyRole(PAUSER_ROLE) {
-        _pause();
-    }
+    ///      reclaim unspent funds during an emergency.
+    function pause() external onlyRole(PAUSER_ROLE) { _pause(); }
 
-    /// @notice Resume normal protocol operation.
-    /// @dev Restricted to PAUSER_ROLE.
-    function unpause() external onlyRole(PAUSER_ROLE) {
-        _unpause();
-    }
+    function unpause() external onlyRole(PAUSER_ROLE) { _unpause(); }
 }
-
-
-
-
-
-

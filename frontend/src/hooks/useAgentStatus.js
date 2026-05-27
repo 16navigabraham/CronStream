@@ -44,15 +44,33 @@ export function useAgentStatus() {
 
 /**
  * Register a newly created stream with the agent-node so it
- * knows which GitHub repo to watch for milestone events.
+ * knows which source + target to watch for milestone events.
  */
-export async function registerStreamWithAgent({ streamId, repo, recipient, ratePerSecond }) {
+export async function registerStreamWithAgent({
+  streamId,
+  repo,                    // legacy — kept for backwards compat
+  verificationSource,
+  verificationTarget,
+  recipient,
+  ratePerSecond,
+  extensionDurationSeconds,
+  chainId,
+}) {
   const url = `${AGENT_URL}/api/v1/register-stream`;
   try {
     const res = await fetch(url, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ streamId, repo, recipient, ratePerSecond }),
+      body:    JSON.stringify({
+        streamId,
+        repo,
+        verificationSource,
+        verificationTarget,
+        recipient,
+        ratePerSecond,
+        extensionDurationSeconds,
+        chainId,
+      }),
     });
     if (!res.ok) throw new Error(`Agent returned ${res.status}`);
     return await res.json();

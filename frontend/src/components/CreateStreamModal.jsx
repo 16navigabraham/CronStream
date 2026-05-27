@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract, usePublicClient, useChainId } from 'wagmi';
-import { parseUnits, formatUnits, parseAbiItem, maxUint256 } from 'viem';
+import { parseUnits, formatUnits, parseAbiItem } from 'viem';
 import { getContractAddress, ROUTER_ABI } from '../lib/wagmi';
 import { registerStreamWithAgent }      from '../hooks/useAgentStatus';
 import { useCreateStream }              from '../context/CreateStreamContext';
@@ -16,21 +16,14 @@ const ERC20_ABI = [
   'function allowance(address owner, address spender) external view returns (uint256)',
 ];
 
-const SECONDS = {
-  hour:  3600n,
-  day:   86400n,
-  week:  604800n,
-  month: 2592000n, // 30 days
-};
-
-const RATE_UNITS     = ['hour', 'day', 'week', 'month'];
-const DURATION_UNITS = ['days', 'weeks', 'months'];
-
-const DURATION_SECONDS = {
-  days:   86400n,
-  weeks:  604800n,
-  months: 2592000n,
-};
+// Milestone window options — how long each validation window lasts before the stream
+// freezes if the agent hasn't verified a deliverable.
+const WINDOW_OPTIONS = [
+  { label: '24 hours', seconds: 86400n },
+  { label: '48 hours', seconds: 172800n },
+  { label: '1 week',   seconds: 604800n },
+  { label: '2 weeks',  seconds: 1209600n },
+];
 
 // ─── Step dots ────────────────────────────────────────────────────────────────
 function StepDots({ current, total }) {
@@ -214,10 +207,12 @@ export default function CreateStreamModal() {
   // Default to USDC on Arb Sepolia; updates to first available wallet token once loaded
   const DEFAULT_TOKEN = '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d';
   const [form, setForm] = useState({
-    token: DEFAULT_TOKEN,
-    rateAmount: '', rateUnit: 'month',
-    durationAmount: '', durationUnit: 'months',
-    verificationSource: 'github', verificationTarget: '',
+    token:              DEFAULT_TOKEN,
+    milestoneAmount:    '',          // value paid per milestone (e.g. 150 USDC)
+    milestoneCount:     '3',         // number of milestones in the contract
+    milestoneWindow:    '86400',     // seconds per window — default 24h
+    verificationSource: 'github',
+    verificationTarget: '',
   });
 
   // When wallet tokens load, auto-select the first one if current selection not in list
@@ -243,26 +238,44 @@ export default function CreateStreamModal() {
   const { decimals }   = selectedToken;
   const recipientAddr  = selectedContractor?.address ?? '';
 
-  const ratePerSecond = form.rateAmount && recipientAddr
-    ? parseUnits(form.rateAmount, decimals) / SECONDS[form.rateUnit]
+  // ── Derived numbers ──────────────────────────────────────────────────────────
+  // Milestone window in seconds (BigInt)
+  const windowSeconds   = BigInt(form.milestoneWindow || '86400');
+  const milestoneCount  = BigInt(Math.max(1, parseInt(form.milestoneCount || '1', 10)));
+
+  // ratePerSecond = ceil(milestoneAmount / windowSeconds)
+  // Ceiling ensures contractor earns AT LEAST milestoneAmount per window.
+  const milestoneRaw  = form.milestoneAmount ? parseUnits(form.milestoneAmount, decimals) : 0n;
+  const ratePerSecond = milestoneRaw > 0n && windowSeconds > 0n
+    ? (milestoneRaw + windowSeconds - 1n) / windowSeconds
     : 0n;
 
-  const durationSeconds = form.durationAmount
-    ? DURATION_SECONDS[form.durationUnit] * BigInt(Math.max(1, parseInt(form.durationAmount || '0')))
-    : 0n;
+  // Full contract duration = window × number of milestones
+  const durationSeconds = windowSeconds * milestoneCount;
 
-  const totalCostRaw = ratePerSecond > 0n && durationSeconds > 0n
-    ? ratePerSecond * durationSeconds
-    : 0n;
+  // Total deposit = rate × full duration — deposited upfront, exact amount approved
+  const totalCostRaw    = ratePerSecond > 0n ? ratePerSecond * durationSeconds : 0n;
+  // Per-milestone display (what contractor earns each window)
+  const perMilestoneRaw = ratePerSecond > 0n ? ratePerSecond * windowSeconds   : 0n;
 
   const totalCostDisplay = totalCostRaw > 0n
     ? parseFloat(formatUnits(totalCostRaw, decimals)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : null;
+  const perMilestoneDisplay = perMilestoneRaw > 0n
+    ? parseFloat(formatUnits(perMilestoneRaw, decimals)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     : null;
 
   function handleClose() {
     if (step === 1 || step === 2) return; // block close mid-tx
     setStep(0);
-    setForm({ token: walletTokens[0]?.address ?? DEFAULT_TOKEN, rateAmount: '', rateUnit: 'month', durationAmount: '', durationUnit: 'months', verificationSource: 'github', verificationTarget: '' });
+    setForm({
+      token:              walletTokens[0]?.address ?? DEFAULT_TOKEN,
+      milestoneAmount:    '',
+      milestoneCount:     '3',
+      milestoneWindow:    '86400',
+      verificationSource: 'github',
+      verificationTarget: '',
+    });
     setSelectedContractor(null);
     setCreatedStreamId(null);
     closeModal();
@@ -296,12 +309,14 @@ export default function CreateStreamModal() {
           setCreatedStreamId(decoded.streamId);
           if (form.verificationTarget) {
             await registerStreamWithAgent({
-              streamId:           decoded.streamId,
-              repo:               form.verificationSource === 'github' ? form.verificationTarget : null,
-              verificationSource: form.verificationSource,
-              verificationTarget: form.verificationTarget,
-              recipient:          recipientAddr,
-              ratePerSecond:      ratePerSecond.toString(),
+              streamId:                decoded.streamId,
+              repo:                    form.verificationSource === 'github' ? form.verificationTarget : null,
+              verificationSource:      form.verificationSource,
+              verificationTarget:      form.verificationTarget,
+              recipient:               recipientAddr,
+              ratePerSecond:           ratePerSecond.toString(),
+              extensionDurationSeconds: Number(windowSeconds),
+              chainId,
             });
           }
         }
@@ -313,7 +328,7 @@ export default function CreateStreamModal() {
 
   if (!open) return null;
 
-  const canConfigure = recipientAddr && form.rateAmount && form.durationAmount;
+  const canConfigure = recipientAddr && form.milestoneAmount && ratePerSecond > 0n && milestoneCount >= 1n;
 
   return (
     <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget) handleClose(); }}>
@@ -378,54 +393,58 @@ export default function CreateStreamModal() {
                 </div>
               </div>
 
-              {/* Rate */}
+              {/* Payment per period */}
               <div>
-                <label className="label">Rate ({selectedToken.symbol})</label>
-                <div className="flex gap-2">
+                <label className="label">
+                  Payment per period <span className="text-muted/50 normal-case tracking-normal font-normal">— wages, milestone, sprint — whatever the work unit is</span>
+                </label>
+                <div className="relative">
                   <input
                     type="number" min="0" step="any"
-                    value={form.rateAmount} placeholder="5000"
-                    onChange={e => setForm(f => ({ ...f, rateAmount: e.target.value }))}
-                    className="input flex-1" required
+                    value={form.milestoneAmount} placeholder="500"
+                    onChange={e => setForm(f => ({ ...f, milestoneAmount: e.target.value }))}
+                    className="input pr-16" required
                   />
-                  <div className="flex rounded-xl border border-border overflow-hidden shrink-0 text-xs">
-                    {RATE_UNITS.map(u => (
-                      <button
-                        key={u} type="button"
-                        onClick={() => setForm(f => ({ ...f, rateUnit: u }))}
-                        className={`px-2.5 py-2 font-medium capitalize transition-colors
-                          ${form.rateUnit === u ? 'bg-accent/10 text-accent' : 'text-muted hover:text-white bg-dark'}`}
-                      >
-                        /{u === 'hour' ? 'hr' : u === 'month' ? 'mo' : u === 'week' ? 'wk' : 'day'}
-                      </button>
-                    ))}
-                  </div>
+                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-muted text-xs font-mono">{selectedToken.symbol}</span>
                 </div>
               </div>
 
-              {/* Duration */}
+              {/* Number of periods */}
               <div>
-                <label className="label">Duration</label>
+                <label className="label">
+                  Number of periods <span className="text-muted/50 normal-case tracking-normal font-normal">— total periods in this contract</span>
+                </label>
+                <input
+                  type="number" min="1" max="52" step="1"
+                  value={form.milestoneCount}
+                  onChange={e => setForm(f => ({ ...f, milestoneCount: e.target.value }))}
+                  className="input"
+                  placeholder="e.g. 4"
+                />
+              </div>
+
+              {/* Payment window */}
+              <div>
+                <label className="label">
+                  Period length <span className="text-muted/50 normal-case tracking-normal font-normal">— how long each payment window runs</span>
+                </label>
                 <div className="flex gap-2">
-                  <input
-                    type="number" min="1"
-                    value={form.durationAmount} placeholder="3"
-                    onChange={e => setForm(f => ({ ...f, durationAmount: e.target.value }))}
-                    className="input flex-1" required
-                  />
-                  <div className="flex rounded-xl border border-border overflow-hidden shrink-0 text-xs">
-                    {DURATION_UNITS.map(u => (
-                      <button
-                        key={u} type="button"
-                        onClick={() => setForm(f => ({ ...f, durationUnit: u }))}
-                        className={`px-2.5 py-2 font-medium capitalize transition-colors
-                          ${form.durationUnit === u ? 'bg-accent/10 text-accent' : 'text-muted hover:text-white bg-dark'}`}
-                      >
-                        {u}
-                      </button>
-                    ))}
-                  </div>
+                  {WINDOW_OPTIONS.map(w => (
+                    <button
+                      key={w.seconds} type="button"
+                      onClick={() => setForm(f => ({ ...f, milestoneWindow: w.seconds.toString() }))}
+                      className={`flex-1 py-2.5 rounded-xl text-xs font-semibold transition-all border
+                        ${form.milestoneWindow === w.seconds.toString()
+                          ? 'bg-accent/10 text-accent border-accent/30'
+                          : 'text-muted border-border hover:text-white hover:border-border/80 bg-dark'}`}
+                    >
+                      {w.label}
+                    </button>
+                  ))}
                 </div>
+                <p className="text-[11px] text-muted mt-1.5 leading-relaxed">
+                  Funds stream continuously from the moment the contract starts. The agent extends each period — if it doesn't, the stream expires and unearned funds return to you.
+                </p>
               </div>
 
               {/* Verification source */}
@@ -467,9 +486,27 @@ export default function CreateStreamModal() {
               </div>
 
               {totalCostDisplay && (
-                <div className="bg-dark border border-border rounded-xl px-4 py-3 flex justify-between text-sm">
-                  <span className="text-muted font-mono">Total deposit</span>
-                  <span className="text-accent font-mono font-bold">{totalCostDisplay} {selectedToken.symbol}</span>
+                <div className="bg-accent/5 border border-accent/20 rounded-xl px-4 py-3 space-y-1.5 text-xs font-mono">
+                  {/* Total deposit — the number the company actually commits */}
+                  <div className="flex justify-between items-baseline">
+                    <span className="text-muted">Total deposit</span>
+                    <span className="text-accent font-bold text-base">{totalCostDisplay} {selectedToken.symbol}</span>
+                  </div>
+                  <div className="flex justify-between text-muted/60">
+                    <span>Per period</span>
+                    <span>{perMilestoneDisplay} {selectedToken.symbol} × {form.milestoneCount}</span>
+                  </div>
+                  <div className="flex justify-between text-muted/60">
+                    <span>Rate</span>
+                    <span>{formatUnits(ratePerSecond, decimals)}/sec · unlocks per verified period</span>
+                  </div>
+                  <div className="flex justify-between text-muted/60">
+                    <span>Contract length</span>
+                    <span>{WINDOW_OPTIONS.find(w => w.seconds.toString() === form.milestoneWindow)?.label} × {form.milestoneCount} periods</span>
+                  </div>
+                  <p className="text-muted/50 text-[10px] pt-0.5 border-t border-border leading-relaxed">
+                    Full amount deposited upfront · locked until agent verifies each period · no verification = stream stops · unearned funds return to you
+                  </p>
                 </div>
               )}
 
@@ -484,7 +521,7 @@ export default function CreateStreamModal() {
           {step === 1 && (
             <div className="flex flex-col gap-4">
               <div className="bg-dark border border-border rounded-xl p-4 text-sm text-muted leading-relaxed">
-                Allow CronStream to pull <span className="text-white font-mono">{totalCostDisplay} {selectedToken.symbol}</span> from your wallet.
+                Approve the contract to hold <span className="text-white font-mono">{totalCostDisplay} {selectedToken.symbol}</span>. The stream starts locked — the contractor earns nothing until the agent verifies each period and extends it. If a period isn't verified, the stream stops and the unearned balance returns to you.
               </div>
               <div className="flex flex-col divide-y divide-border border border-border rounded-xl overflow-hidden text-xs font-mono">
                 <div className="flex justify-between px-4 py-3">
@@ -492,11 +529,11 @@ export default function CreateStreamModal() {
                   <span>{selectedContractor?.name || `${recipientAddr.slice(0,8)}…${recipientAddr.slice(-6)}`}</span>
                 </div>
                 <div className="flex justify-between px-4 py-3">
-                  <span className="text-muted">Spender</span>
-                  <span>{getContractAddress(chainId).slice(0,10)}…{getContractAddress(chainId).slice(-6)}</span>
+                  <span className="text-muted">Periods</span>
+                  <span>{form.milestoneCount} × {perMilestoneDisplay} {selectedToken.symbol}</span>
                 </div>
                 <div className="flex justify-between px-4 py-3 bg-accent/5">
-                  <span className="text-muted">Amount</span>
+                  <span className="text-muted">Total deposit</span>
                   <span className="text-accent font-bold">{totalCostDisplay} {selectedToken.symbol}</span>
                 </div>
               </div>
@@ -506,10 +543,10 @@ export default function CreateStreamModal() {
                 </div>
               )}
               {needsApproval !== false ? (
-                <button onClick={() => doApprove({ address: form.token, abi: ERC20_ABI, functionName: 'approve', args: [getContractAddress(chainId), maxUint256] })}
+                <button onClick={() => doApprove({ address: form.token, abi: ERC20_ABI, functionName: 'approve', args: [getContractAddress(chainId), totalCostRaw] })}
                   disabled={approvePending || approveConfirming}
                   className="btn-primary w-full disabled:opacity-40">
-                  {approvePending ? 'Confirm in wallet…' : approveConfirming ? 'Approving…' : `Approve ${selectedToken.symbol}`}
+                  {approvePending ? 'Confirm in wallet…' : approveConfirming ? 'Approving…' : `Approve ${totalCostDisplay} ${selectedToken.symbol}`}
                 </button>
               ) : (
                 <div className="flex flex-col gap-2">
@@ -527,12 +564,12 @@ export default function CreateStreamModal() {
             <div className="flex flex-col gap-4">
               <div className="flex flex-col divide-y divide-border border border-border rounded-xl overflow-hidden text-sm font-mono">
                 {[
-                  ['To',       selectedContractor?.name ? `${selectedContractor.name} · ${recipientAddr.slice(0,8)}…` : `${recipientAddr.slice(0,8)}…${recipientAddr.slice(-6)}`],
-                  ['Token',    selectedToken.symbol],
-                  ['Rate',     `${form.rateAmount} ${selectedToken.symbol}/${form.rateUnit}`],
-                  ['Duration', `${form.durationAmount} ${form.durationUnit}`],
+                  ['To',              selectedContractor?.name ? `${selectedContractor.name} · ${recipientAddr.slice(0,8)}…` : `${recipientAddr.slice(0,8)}…${recipientAddr.slice(-6)}`],
+                  ['Token',           selectedToken.symbol],
+                  ['Per period',      `${perMilestoneDisplay} ${selectedToken.symbol}`],
+                  ['Periods',         `${form.milestoneCount} × ${WINDOW_OPTIONS.find(w => w.seconds.toString() === form.milestoneWindow)?.label}`],
                   form.verificationTarget ? [VERIFICATION_SOURCES.find(s=>s.key===form.verificationSource)?.label ?? 'Source', form.verificationTarget] : null,
-                  ['Deposit',  `${totalCostDisplay} ${selectedToken.symbol}`],
+                  ['Total deposit',   `${totalCostDisplay} ${selectedToken.symbol}`],
                 ].filter(Boolean).map(([label, value], i, arr) => (
                   <div key={label} className={`flex justify-between px-4 py-3 ${i === arr.length - 1 ? 'bg-accent/5' : ''}`}>
                     <span className="text-muted">{label}</span>
@@ -551,10 +588,10 @@ export default function CreateStreamModal() {
                 </div>
               )}
               <button
-                onClick={() => doCreate({ address: getContractAddress(chainId), abi: ROUTER_ABI, functionName: 'createStream', args: [recipientAddr, form.token, ratePerSecond, durationSeconds] })}
+                onClick={() => doCreate({ address: getContractAddress(chainId), abi: ROUTER_ABI, functionName: 'createStream', args: [recipientAddr, form.token, ratePerSecond, 0n, totalCostRaw] })}
                 disabled={createPending || createConfirming || ratePerSecond === 0n}
                 className="btn-primary w-full disabled:opacity-40">
-                {createPending ? 'Confirm in wallet…' : createConfirming ? 'Creating stream…' : 'Deposit & start stream'}
+                {createPending ? 'Confirm in wallet…' : createConfirming ? 'Creating stream…' : 'Deposit & create stream'}
               </button>
             </div>
           )}
@@ -565,13 +602,16 @@ export default function CreateStreamModal() {
               <div className="w-14 h-14 rounded-2xl bg-accent/10 border border-accent/20 flex items-center justify-center text-2xl">✓</div>
               <div>
                 <p className="font-semibold mb-1">
-                  {selectedContractor?.name || `${recipientAddr.slice(0,6)}…`} is earning
+                  Stream created — waiting for first verification
                 </p>
-                <p className="text-muted text-sm">{form.rateAmount} {selectedToken.symbol}/{form.rateUnit} — starting now</p>
+                <p className="text-muted text-sm">
+                  {perMilestoneDisplay} {selectedToken.symbol} per period ·{' '}
+                  {form.milestoneCount} × {WINDOW_OPTIONS.find(w => w.seconds.toString() === form.milestoneWindow)?.label}
+                </p>
               </div>
               {form.verificationTarget && (
                 <div className="text-xs text-accent font-mono bg-accent/5 border border-accent/20 rounded-xl px-4 py-2 w-full">
-                  Agent verifying via {VERIFICATION_SOURCES.find(s=>s.key===form.verificationSource)?.label} · {form.verificationTarget}
+                  Agent watching {VERIFICATION_SOURCES.find(s=>s.key===form.verificationSource)?.label} · {form.verificationTarget}
                 </div>
               )}
               {createTxHash && (

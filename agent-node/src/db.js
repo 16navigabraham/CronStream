@@ -62,6 +62,7 @@ const SCHEMA = `
     sender              TEXT,
     recipient           TEXT,
     token               TEXT,
+    rate_per_second     TEXT,
     created_at          INTEGER NOT NULL DEFAULT (unixepoch())
   );
 
@@ -126,6 +127,11 @@ export async function initDb() {
     // stream_registry — verification source support
     "ALTER TABLE stream_registry ADD COLUMN verification_source TEXT NOT NULL DEFAULT 'github'",
     'ALTER TABLE stream_registry ADD COLUMN verification_target TEXT',
+    "ALTER TABLE profiles ADD COLUMN display_currency TEXT NOT NULL DEFAULT 'USD'",
+    'ALTER TABLE stream_registry ADD COLUMN rate_per_second TEXT',
+    // contract_address — tracks which deployed contract owns this stream so
+    // re-deploys don't orphan old stream records
+    'ALTER TABLE stream_registry ADD COLUMN contract_address TEXT',
   ];
   for (const sql of migrations) {
     try { await db.execute(sql); } catch { /* column already exists */ }
@@ -229,11 +235,13 @@ export async function getExtensionCount() {
  * @param {string}  [params.sender]               — company wallet address
  * @param {string}  [params.recipient]            — contractor wallet address
  * @param {string}  [params.token]                — ERC-20 token address
+ * @param {string}  [params.ratePerSecond]        — immutable rate (BigInt as string)
  */
 export async function registerStream({
   streamId, chainId, githubRepo,
   verificationSource, verificationTarget,
-  sender, recipient, token,
+  sender, recipient, token, ratePerSecond,
+  contractAddress,
 }) {
   const db = getDb();
   if (!db) return;
@@ -243,15 +251,26 @@ export async function registerStream({
   const finalSource = verificationSource ?? 'github';
 
   await db.execute({
-    sql: `INSERT OR REPLACE INTO stream_registry
-            (stream_id, chain_id, github_repo, verification_source, verification_target, sender, recipient, token)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    sql: `INSERT INTO stream_registry
+            (stream_id, chain_id, github_repo, verification_source, verification_target, sender, recipient, token, rate_per_second, contract_address)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT (stream_id) DO UPDATE SET
+            verification_source = COALESCE(excluded.verification_source, stream_registry.verification_source),
+            verification_target = COALESCE(excluded.verification_target, stream_registry.verification_target),
+            github_repo         = COALESCE(excluded.github_repo,         stream_registry.github_repo),
+            sender              = COALESCE(excluded.sender,              stream_registry.sender),
+            recipient           = COALESCE(excluded.recipient,           stream_registry.recipient),
+            token               = COALESCE(excluded.token,               stream_registry.token),
+            rate_per_second     = COALESCE(excluded.rate_per_second,     stream_registry.rate_per_second),
+            contract_address    = COALESCE(excluded.contract_address,    stream_registry.contract_address)`,
     args: [
       streamId, chainId,
-      githubRepo ?? finalTarget,   // keep github_repo populated for legacy queries
+      githubRepo ?? finalTarget,
       finalSource,
       finalTarget,
       sender ?? null, recipient ?? null, token ?? null,
+      ratePerSecond != null ? String(ratePerSecond) : null,
+      contractAddress ?? null,
     ],
   });
 }
@@ -291,7 +310,7 @@ export async function getStream(streamId) {
  * Upsert a user profile keyed by wallet address.
  */
 export async function upsertProfile({ address, username, role, name, github, twitter, linkedin, farcaster, website, avatarUrl, apiKey,
-  jiraUrl, jiraEmail, jiraToken, bitbucketWorkspace, bitbucketUser, bitbucketPassword, figmaToken }) {
+  jiraUrl, jiraEmail, jiraToken, bitbucketWorkspace, bitbucketUser, bitbucketPassword, figmaToken, displayCurrency }) {
   const db = getDb();
   if (!db) return;
 
@@ -308,8 +327,8 @@ export async function upsertProfile({ address, username, role, name, github, twi
   await db.execute({
     sql: `INSERT INTO profiles
             (address, username, role, name, github, twitter, linkedin, farcaster, website, avatar_url, api_key,
-             jira_url, jira_email, jira_token, bitbucket_workspace, bitbucket_user, bitbucket_password, figma_token)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             jira_url, jira_email, jira_token, bitbucket_workspace, bitbucket_user, bitbucket_password, figma_token, display_currency)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(address) DO UPDATE SET
             username             = COALESCE(excluded.username, profiles.username),
             name                 = excluded.name,
@@ -329,6 +348,7 @@ export async function upsertProfile({ address, username, role, name, github, twi
             bitbucket_user       = COALESCE(excluded.bitbucket_user,      profiles.bitbucket_user),
             bitbucket_password   = COALESCE(excluded.bitbucket_password,  profiles.bitbucket_password),
             figma_token          = COALESCE(excluded.figma_token,         profiles.figma_token),
+            display_currency     = COALESCE(excluded.display_currency,    profiles.display_currency),
             updated_at           = unixepoch()`,
     args: [
       address.toLowerCase(),
@@ -349,6 +369,7 @@ export async function upsertProfile({ address, username, role, name, github, twi
       bitbucketUser       ?? null,
       encBitbucketPassword,      // AES-256-GCM encrypted
       encFigmaToken,             // AES-256-GCM encrypted
+      displayCurrency     ?? null,
       apiKeySentinel,
     ],
   });

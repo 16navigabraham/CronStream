@@ -49,7 +49,9 @@ async function startChainListener(chainId, config) {
     return;
   }
 
-  const provider = new ethers.JsonRpcProvider(rpcUrl);
+  // batchMaxCount: 1 disables request coalescing — public RPCs reject batched
+  // JSON-RPC arrays and ethers.js v6 throws "could not coalesce error" otherwise.
+  const provider = new ethers.JsonRpcProvider(rpcUrl, undefined, { batchMaxCount: 1 });
   const contract = new ethers.Contract(address, ROUTER_ABI, provider);
 
   // ── Catch-up: replay missed events since last restart ──────────────────────
@@ -87,26 +89,55 @@ async function startChainListener(chainId, config) {
     console.warn(`[listener:${config.name}] Could not replay past events — live listener will catch new ones`);
   }
 
-  // ── Live subscription ──────────────────────────────────────────────────────
-  contract.on('StreamCreated', async (streamId, sender, recipient, ratePerSecond, evt) => {
-    await handleStreamCreated(chainId, config.name, evt ?? { args: { streamId, sender, recipient, ratePerSecond } });
-  });
+  // ── Live polling — getLogs every 30s with 500-block windows ──────────────
+  // ethers.js provider.on() uses eth_getFilterChanges which has a 500-block cap
+  // on Alchemy free tier. Polling getLogs with bounded ranges avoids that limit.
+  const POLL_INTERVAL_MS = 30_000;
+  const MAX_BLOCKS_PER_POLL = 490; // stay under Alchemy's 500-block free limit
+  let lastPolledBlock = latestBlock;
 
-  console.log(`[listener:${config.name}] ✓ Live listener active on ${address}`);
+  async function pollNewEvents() {
+    try {
+      const currentBlock = await provider.getBlockNumber();
+      if (currentBlock <= lastPolledBlock) return;
+
+      // Process in chunks so we never exceed the block range limit
+      let from = lastPolledBlock + 1;
+      while (from <= currentBlock) {
+        const to = Math.min(from + MAX_BLOCKS_PER_POLL - 1, currentBlock);
+        const events = await contract.queryFilter(contract.filters.StreamCreated(), from, to);
+        for (const evt of events) {
+          await handleStreamCreated(chainId, config.name, evt);
+        }
+        from = to + 1;
+      }
+      lastPolledBlock = currentBlock;
+    } catch (err) {
+      // Non-fatal — next poll will retry
+      console.warn(`[listener:${config.name}] Poll error (non-fatal):`, err.shortMessage ?? err.message);
+    }
+  }
+
+  const pollTimer = setInterval(pollNewEvents, POLL_INTERVAL_MS);
+
+  // Graceful shutdown — callers can await startStreamListeners() and attach a
+  // SIGTERM handler if needed; for now the timer runs until process exit.
+  console.log(`[listener:${config.name}] ✓ Polling every ${POLL_INTERVAL_MS / 1000}s (max ${MAX_BLOCKS_PER_POLL} blocks/poll) on ${address}`);
 }
 
 // ─── Event handler ────────────────────────────────────────────────────────────
 
 async function handleStreamCreated(chainId, chainName, evt) {
   try {
-    const { streamId, sender, recipient } = evt.args ?? evt;
+    const { streamId, sender, recipient, ratePerSecond } = evt.args ?? evt;
     if (!streamId) return;
 
     await registerStream({
       streamId,
       chainId,
-      sender:    sender    ?? null,
-      recipient: recipient ?? null,
+      sender:          sender    ?? null,
+      recipient:       recipient ?? null,
+      ratePerSecond:   ratePerSecond != null ? ratePerSecond.toString() : null,
       // verificationSource / target not known yet — company sets these via
       // the frontend after creation (or leaves them blank for manual approval)
       verificationSource: 'github',

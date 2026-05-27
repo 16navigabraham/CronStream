@@ -1,6 +1,6 @@
 import { getDefaultConfig } from '@rainbow-me/rainbowkit';
 import { arbitrumSepolia } from 'wagmi/chains';
-import { defineChain, http } from 'viem';
+import { defineChain, http, getAddress, parseAbi } from 'viem';
 
 export const robinhoodTestnet = defineChain({
   id:   46630,
@@ -15,10 +15,11 @@ export const robinhoodTestnet = defineChain({
   testnet: true,
 });
 
-// Contract addresses per chain — updated after redeployment with Pausable + balance delta
+// Contract addresses per chain — read from env vars, normalised to EIP-55 checksum.
+// Set VITE_CONTRACT_ADDRESS_ARB_SEPOLIA and VITE_CONTRACT_ADDRESS_ROBINHOOD in .env
 export const CONTRACT_ADDRESSES = {
-  421614: '0x12B1c71A60CBC3Fdd44D3D974546D2751feC04eD', // Arbitrum Sepolia
-  46630:  '0xfB9A00926eC7716626DA9b960F0fb75ff58dCBFA', // Robinhood Chain
+  421614: getAddress(import.meta.env.VITE_CONTRACT_ADDRESS_ARB_SEPOLIA ?? '0x5A141097BAF8D88f665217817A1f89e1663f0C16'),
+  46630:  getAddress(import.meta.env.VITE_CONTRACT_ADDRESS_ROBINHOOD   ?? '0x12B1c71A60CBC3Fdd44D3D974546D2751feC04eD'),
 };
 
 /** Resolve the correct contract address for a given chainId (falls back to Arbitrum Sepolia). */
@@ -29,17 +30,38 @@ export function getContractAddress(chainId) {
 // Legacy export — keeps any existing imports working, defaults to Arbitrum Sepolia
 export const CONTRACT_ADDRESS = CONTRACT_ADDRESSES[421614];
 
-export const ROUTER_ABI = [
-  'function createStream(address recipient, address token, uint256 ratePerSecond, uint256 initialDurationSeconds) external returns (bytes32)',
+// Pre-parsed with parseAbi so every consumer gets canonical ABI objects (not raw strings).
+// Viem's internal helpers (getAbiItem, encodeFunctionData, decodeErrorResult…) all expect
+// object arrays — passing raw strings can throw "Cannot use 'in' operator" TypeErrors.
+export const ROUTER_ABI = parseAbi([
+  // ── Functions ──────────────────────────────────────────────────────────────
+  'function createStream(address recipient, address token, uint256 ratePerSecond, uint256 initialDurationSeconds, uint256 depositAmount) external returns (bytes32)',
   'function withdrawFromStream(bytes32 streamId, uint256 amount) external',
   'function cancelStream(bytes32 streamId) external',
   'function reclaimUnearned(bytes32 streamId) external',
   'function balanceOf(bytes32 streamId) external view returns (uint256)',
-  'function streams(bytes32) external view returns (address sender, address recipient, address token, uint256 ratePerSecond, uint256 startTime, uint256 streamValidUntil, uint256 totalDeposited, uint256 totalWithdrawn, uint256 nonce)',
+  'function feeBps() external view returns (uint256)',
+  'function streams(bytes32) external view returns (address sender, address recipient, address token, uint256 ratePerSecond, uint256 startTime, uint256 streamValidUntil, uint256 totalDeposited, uint256 totalWithdrawn, uint256 nonce, uint256 earnedSnapshot, uint256 lastWindowStart)',
   'function streamNonces(address) external view returns (uint256)',
+  // ── Events ─────────────────────────────────────────────────────────────────
   'event StreamCreated(bytes32 indexed streamId, address indexed sender, address indexed recipient, uint256 ratePerSecond)',
   'event WithdrawalExecuted(bytes32 indexed streamId, address indexed recipient, uint256 amount, uint256 protocolFee)',
-];
+  'event UnspentFundsReclaimed(bytes32 indexed streamId, address indexed sender, uint256 amount)',
+  'event StreamExtended(bytes32 indexed streamId, uint256 newValidUntil, uint256 newNonce)',
+  // ── Custom errors — decoded by viem on revert so parseWriteError can name them ──
+  'error StreamDoesNotExist()',
+  'error StreamAlreadyExists()',
+  'error InvalidCryptographicSignature()',
+  'error UnderflowWithdrawalLimit()',
+  'error VoucherExpired()',
+  'error FeeBpsExceedsMax()',
+  'error ZeroAddress()',
+  'error NotRecipient()',
+  'error NotSender()',
+  'error StreamStillActive()',
+  'error NothingToReclaim()',
+  'error InsufficientDeposit()',
+]);
 
 export const wagmiConfig = getDefaultConfig({
   appName:     'CronStream',

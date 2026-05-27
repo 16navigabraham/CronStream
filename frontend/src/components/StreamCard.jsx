@@ -255,10 +255,10 @@ export default function StreamCard({ streamId, role, onRefresh, chainId: propCha
 
             {/* Action button — desktop */}
             <div className="mt-3">
-              {role === 'contractor' && isActive && (
+              {role === 'contractor' && (isActive || propRawBalance > 0n) && (
                 <button className="btn-primary py-1.5 px-4 text-xs"
                   onClick={e => { e.stopPropagation(); setShowWithdraw(true); }}>
-                  Withdraw
+                  {isActive ? 'Withdraw' : 'Claim remaining'}
                 </button>
               )}
               {role === 'company' && isExpired && !reclaimSuccess && (
@@ -273,16 +273,16 @@ export default function StreamCard({ streamId, role, onRefresh, chainId: propCha
           </div>
 
           {/* Action button — mobile only (below progress bar) */}
-          <div className="sm:hidden flex items-center justify-end gap-3 pt-1" onClick={e => e.stopPropagation()}>
-            {role === 'contractor' && isActive && (
-              <button className="btn-primary py-1.5 px-4 text-xs"
+          <div className="sm:hidden flex items-center justify-end gap-3 pt-3 pb-1" onClick={e => e.stopPropagation()}>
+            {role === 'contractor' && (isActive || propRawBalance > 0n) && (
+              <button className="btn-primary py-2 px-4 text-xs"
                 onClick={e => { e.stopPropagation(); setShowWithdraw(true); }}>
-                Withdraw
+                {isActive ? 'Withdraw' : 'Claim remaining'}
               </button>
             )}
             {role === 'company' && isExpired && !reclaimSuccess && (
               <button disabled={reclaimPending || reclaimConfirming}
-                className="btn-outline py-1.5 px-4 text-xs"
+                className="btn-outline py-2 px-4 text-xs"
                 onClick={e => { e.stopPropagation(); handleReclaim(); }}>
                 {reclaimPending || reclaimConfirming ? 'Reclaiming…' : 'Reclaim'}
               </button>

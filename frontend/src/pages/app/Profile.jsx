@@ -4,6 +4,7 @@ import { ExternalLink } from 'lucide-react';
 import { useProfile }  from '../../hooks/useProfile';
 import { useStreams }   from '../../hooks/useStreams';
 import { useAgentStatus } from '../../hooks/useAgentStatus';
+import { SUPPORTED_CURRENCIES, DEFAULT_CURRENCY } from '../../lib/currencies';
 
 // ─── SVG brand icon ───────────────────────────────────────────────────────────
 const GithubIcon = () => (
@@ -84,17 +85,22 @@ export default function Profile() {
   const [saved,           setSaved]          = useState(false);
   const [editingIdentity, setEditingIdentity] = useState(false);
   const [draftForm,       setDraftForm]      = useState(null);
+  const [displayCurrency, setDisplayCurrency] = useState(DEFAULT_CURRENCY);
+  const [currencySaved,   setCurrencySaved]   = useState(false);
 
   useEffect(() => {
-    if (profile) setForm({
-      name:      profile.name      ?? '',
-      github:    profile.github    ?? '',
-      twitter:   profile.twitter   ?? '',
-      linkedin:  profile.linkedin  ?? '',
-      farcaster: profile.farcaster ?? '',
-      website:   profile.website   ?? '',
-      avatar:    profile.avatar    ?? '',
-    });
+    if (profile) {
+      setForm({
+        name:      profile.name      ?? '',
+        github:    profile.github    ?? '',
+        twitter:   profile.twitter   ?? '',
+        linkedin:  profile.linkedin  ?? '',
+        farcaster: profile.farcaster ?? '',
+        website:   profile.website   ?? '',
+        avatar:    profile.avatar    ?? '',
+      });
+      setDisplayCurrency(profile.display_currency ?? DEFAULT_CURRENCY);
+    }
   }, [profile]);
 
   const role      = profile?.role ?? '';
@@ -126,6 +132,13 @@ export default function Profile() {
       saveProfile({ ...updated, role });
     };
     reader.readAsDataURL(file);
+  }
+
+  async function saveCurrency(code) {
+    setDisplayCurrency(code);
+    await saveProfile({ ...form, role, display_currency: code });
+    setCurrencySaved(true);
+    setTimeout(() => setCurrencySaved(false), 2000);
   }
 
   const initials = form.name
@@ -297,6 +310,38 @@ export default function Profile() {
               </div>
             </>
           )}
+        </Section>
+
+        <Section
+          title="Preferences"
+          desc="Choose how monetary values are displayed across the app."
+        >
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="label mb-0">Display currency</label>
+              {currencySaved && <span className="text-xs text-accent font-mono">✓ saved</span>}
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {SUPPORTED_CURRENCIES.map(c => (
+                <button
+                  key={c.code}
+                  type="button"
+                  onClick={() => saveCurrency(c.code)}
+                  className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border text-sm font-mono
+                    transition-colors text-left
+                    ${displayCurrency === c.code
+                      ? 'border-accent/60 bg-accent/10 text-accent'
+                      : 'border-border bg-dark text-muted hover:border-accent/30 hover:text-white'}`}
+                >
+                  <span className="text-base leading-none w-5 shrink-0">{c.symbol}</span>
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold truncate">{c.code}</div>
+                    <div className="text-[10px] truncate opacity-70">{c.name}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
         </Section>
 
         <Section title="Wallet">

@@ -6,14 +6,16 @@ import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts';
 import { useNavigate } from 'react-router-dom';
-import { Inbox } from 'lucide-react';
-import { useProfile }     from '../../hooks/useProfile';
-import { useStreams }     from '../../hooks/useStreams';
-import { useAgentStatus } from '../../hooks/useAgentStatus';
+import { Inbox, TrendingUp, Clock, ArrowRight } from 'lucide-react';
+import { useProfile }          from '../../hooks/useProfile';
+import { useStreams }           from '../../hooks/useStreams';
+import { useStreamEvents }      from '../../hooks/useStreamEvents';
+import { useAgentStatus }       from '../../hooks/useAgentStatus';
+import { useDisplayCurrency }   from '../../hooks/useDisplayCurrency';
 import { getContractAddress, ROUTER_ABI } from '../../lib/wagmi';
-import { CHAIN_TOKENS }  from '../../hooks/useWalletTokens';
-import StreamCard         from '../../components/StreamCard';
-import MagneticDock       from '../../components/MagneticDock';
+import { CHAIN_TOKENS }         from '../../hooks/useWalletTokens';
+import StreamCard                from '../../components/StreamCard';
+import MagneticDock              from '../../components/MagneticDock';
 
 // ─── Token meta ───────────────────────────────────────────────────────────────
 function tokenMeta(chainId, tokenAddress) {
@@ -25,7 +27,7 @@ function tokenMeta(chainId, tokenAddress) {
 }
 
 // ─── Live ticking number ──────────────────────────────────────────────────────
-function LiveNum({ raw, rate, decimals, className = '', size = 'xl' }) {
+function LiveNum({ raw, rate, decimals, className = '', size = 'xl', fmtCurrency }) {
   const [val, setVal] = useState(null);
   const base = useRef(null);
   const raf  = useRef(null);
@@ -51,6 +53,16 @@ function LiveNum({ raw, rate, decimals, className = '', size = 'xl' }) {
   }, []);
 
   if (val === null) return <span className={className}>—</span>;
+
+  // If a currency formatter is provided, use it (multi-currency mode)
+  if (fmtCurrency) {
+    return (
+      <span className={`font-mono tabular-nums ${className}`}>
+        {fmtCurrency(val)}
+      </span>
+    );
+  }
+
   const dp = decimals <= 6 ? 4 : 6;
   const [i, d] = val.toFixed(dp).split('.');
   return (
@@ -329,9 +341,9 @@ export default function ContractorDashboard() {
   const { address } = useAccount();
   const chainId     = useChainId();
   const { profile } = useProfile(address);
-  const { received, loading } = useStreams();
+  const { received, loading, refresh } = useStreams();
+  useStreamEvents(refresh);
   const { online }  = useAgentStatus();
-  const [withdrawOpen, setWithdrawOpen] = useState(false);
 
   // Determine the primary chain from the streams (all should be on same chain).
   // Falls back to wallet chain if DB streams have no chainId.
@@ -355,29 +367,79 @@ export default function ContractorDashboard() {
     refetchInterval: 8_000,
   });
 
+  // ── streams() reads — pull fresh streamValidUntil (and other state) from chain
+  //    so "active" count is accurate even when Blockscout data lags. ─────────────
+  const stateCalls = useMemo(() => received.map(s => ({
+    address:      getContractAddress(streamChainId),
+    abi:          ROUTER_ABI,
+    functionName: 'streams',
+    args:         [s.streamId],
+  })), [streamIds, streamChainId]);
+
+  const stateResults = useContractReadsForChain({
+    chainId:         streamChainId,
+    calls:           stateCalls,
+    enabled:         streamIds.length > 0,
+    refetchInterval: 15_000,
+  });
+
   // batchLoading = still waiting for useStreams API call to complete
   const batchLoading = loading;
   const balData = balResults.length > 0 ? balResults : null;
 
-  // Enrich streams — data comes from server (ratePerSecond, streamValidUntil, etc.)
-  // balances refreshed by balResults above
-  const enriched = useMemo(() => received.map((s, i) => ({
-    ...s,
-    rawBalance: balData?.[i] ?? s.rawBalance ?? 0n,
-  })), [balData, received]);
+  // Enrich streams — balance from balResults, on-chain state from stateResults
+  const enriched = useMemo(() =>
+    received.map((s, i) => {
+      const state = stateResults[i];
+      return {
+        ...s,
+        rawBalance: balData?.[i] ?? s.rawBalance ?? 0n,
+        ...(state && {
+          streamValidUntil: state.streamValidUntil ?? s.streamValidUntil ?? 0n,
+          totalDeposited:   state.totalDeposited   ?? s.totalDeposited   ?? 0n,
+          totalWithdrawn:   state.totalWithdrawn   ?? s.totalWithdrawn   ?? 0n,
+          ratePerSecond:    state.ratePerSecond    ?? s.ratePerSecond    ?? 0n,
+        }),
+      };
+    }),
+  [balData, stateResults, received]);
 
   // Aggregate stats
-  const totalClaimable  = enriched.reduce((s, e) => s + e.rawBalance, 0n);
-  const totalWithdrawn  = enriched.reduce((s, e) => s + e.totalWithdrawn, 0n);
-  const totalRate       = enriched.reduce((s, e) => s + (e.ratePerSecond ?? 0n), 0n);
+  const totalWithdrawn  = enriched.reduce((s, e) => s + (e.totalWithdrawn ?? 0n), 0n);
   const now             = Math.floor(Date.now() / 1000);
-  const activeStreams   = enriched.filter(e => e.streamValidUntil && Number(e.streamValidUntil) > now);
+
+  // Active = streamValidUntil is set AND in the future (compare as number to handle BigInt/string/number)
+  function isStreamActive(e) {
+    if (!e.streamValidUntil) return false;
+    const until = Number(e.streamValidUntil);
+    return !isNaN(until) && until > 0 && until > now;
+  }
+
+  const activeStreams = enriched.filter(isStreamActive);
+
+  // Claimable from active streams only (don't include expired — those go to Income page)
+  const totalClaimable = activeStreams.reduce((s, e) => s + (e.rawBalance ?? 0n), 0n);
+
+  // Only sum rate from actually-active streams so earning rate isn't inflated by expired ones
+  const totalRate = activeStreams.reduce((s, e) => s + (e.ratePerSecond ?? 0n), 0n);
+
+  // Visible in the "current streams" list — active only; expired go to Income/History pages
+  const visibleStreams = activeStreams;
 
   // Primary token (most common) for chart + display
   const primaryToken = enriched.find(e => e.token)?.token ?? null;
   const { symbol: primarySymbol, decimals: primaryDecimals } = tokenMeta(chainId, primaryToken);
 
   const navigate = useNavigate();
+
+  // Multi-currency display
+  const { fmt: fmtCurrency } = useDisplayCurrency(profile?.display_currency);
+
+  // Helper: format a raw BigInt token amount to the user's preferred display currency
+  function fmtRaw(raw, decimals = primaryDecimals ?? 6) {
+    const usd = parseFloat(formatUnits(raw ?? 0n, decimals));
+    return fmtCurrency(usd);
+  }
 
   const initials = profile?.name
     ? profile.name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
@@ -422,107 +484,123 @@ export default function ContractorDashboard() {
               {online ? 'Agent online' : 'Offline'}
             </div>
           )}
-          {totalClaimable > 0n && (
-            <button onClick={() => setWithdrawOpen(true)} className="btn-primary py-2 px-4 text-sm">
-              Claim earnings
-            </button>
-          )}
+          {/* Go to income page — don't open dashboard modal for claimable amounts */}
+          <button onClick={() => navigate('/app/income')} className="btn-primary py-2 px-4 text-sm">
+            Income
+          </button>
         </div>
       </div>
 
       {/* ── KPI row ────────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
 
         {/* Total received all-time */}
         <div className="stat-card">
-          <p className="stat-label">Total received</p>
-          <div className="text-xl font-mono font-semibold text-white tabular-nums">
-            {primarySymbol
-              ? parseFloat(formatUnits(totalWithdrawn, primaryDecimals)).toFixed(2)
-              : '—'}
+          <div className="stat-value tabular-nums">
+            {primarySymbol ? fmtRaw(totalWithdrawn) : '—'}
           </div>
-          <p className="text-[10px] text-muted font-mono">
-            {primarySymbol ? `${primarySymbol} · all time` : 'all time'}
-          </p>
+          <div className="stat-label">Total received</div>
+          <p className="text-[10px] text-muted font-mono mt-0.5">all time</p>
         </div>
 
         {/* Claimable now — live tick */}
         <div className="stat-card border-accent/20 bg-accent/[0.03]">
-          <p className="stat-label text-accent/70">Claimable now</p>
-          <div className="text-xl font-bold text-accent">
+          <div className="stat-value text-accent tabular-nums">
             {primarySymbol
-              ? <LiveNum raw={totalClaimable} rate={totalRate} decimals={primaryDecimals} />
+              ? <LiveNum raw={totalClaimable} rate={totalRate} decimals={primaryDecimals} fmtCurrency={fmtCurrency} />
               : '—'}
           </div>
-          <p className="text-[10px] text-muted font-mono">
-            {primarySymbol ? `${primarySymbol} · pending` : 'pending'}
-          </p>
+          <div className="stat-label">Claimable now</div>
+          <p className="text-[10px] text-muted font-mono mt-0.5">pending</p>
         </div>
 
         {/* Earning rate */}
         <div className="stat-card">
-          <p className="stat-label">Earning rate</p>
-          <div className="text-xl font-mono font-semibold text-white tabular-nums">
+          <div className="stat-value tabular-nums">
             {primarySymbol
-              ? (parseFloat(formatUnits(totalRate, primaryDecimals)) * 86400).toFixed(2)
+              ? fmtCurrency(parseFloat(formatUnits(totalRate, primaryDecimals)) * 86400)
               : '—'}
           </div>
-          <p className="text-[10px] text-muted font-mono">
-            {primarySymbol ? `${primarySymbol}/day` : 'per day'}
-          </p>
+          <div className="stat-label">Earning rate</div>
+          <p className="text-[10px] text-muted font-mono mt-0.5">per day</p>
         </div>
 
         {/* Active streams */}
         <div className="stat-card">
-          <p className="stat-label">Active streams</p>
-          <div className="text-xl font-mono font-semibold text-white">{activeStreams.length}</div>
-          <p className="text-[10px] text-muted font-mono">of {received.length} total</p>
+          <div className={`stat-value ${activeStreams.length > 0 ? 'text-accent' : ''}`}>
+            {activeStreams.length}
+          </div>
+          <div className="stat-label">Active streams</div>
+          <p className="text-[10px] text-muted font-mono mt-0.5">
+            {received.length === 0
+              ? 'no streams yet'
+              : activeStreams.length === 0
+                ? `${received.length} expired`
+                : `of ${received.length} streams`}
+          </p>
+        </div>
+
+        {/* Protocol fee */}
+        <div className="stat-card">
+          <div className="stat-value">0.5%</div>
+          <div className="stat-label">Protocol fee</div>
+          <p className="text-[10px] text-muted font-mono mt-0.5">per withdrawal</p>
         </div>
       </div>
 
       {/* ── Payment link ───────────────────────────────────────────────────── */}
       {profile?.username && <ProfileLinkBanner username={profile.username} />}
 
-      {/* ── Income history shortcut ────────────────────────────────────────── */}
-      <button
-        onClick={() => navigate('/app/income')}
-        className="w-full card mb-6 flex items-center justify-between gap-4 hover:border-accent/30 hover:bg-accent/[0.02] transition-all text-left group"
-      >
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-xl border border-border bg-dark flex items-center justify-center text-muted group-hover:text-accent group-hover:border-accent/30 transition-colors shrink-0">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
-            </svg>
+      {/* ── Quick-access: Income + History ────────────────────────────────── */}
+      <div className="grid grid-cols-2 gap-3 mb-6">
+        <button
+          onClick={() => navigate('/app/income')}
+          className="card flex items-center justify-between gap-3 hover:border-accent/30 hover:bg-accent/[0.02] transition-all text-left group"
+        >
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl border border-border bg-dark flex items-center justify-center text-muted group-hover:text-accent group-hover:border-accent/30 transition-colors shrink-0">
+              <TrendingUp size={14} />
+            </div>
+            <div>
+              <p className="text-[10px] font-mono text-muted uppercase tracking-widest">Income</p>
+              {primarySymbol && (
+                <p className="text-sm font-mono text-white tabular-nums mt-0.5">
+                  {fmtRaw(totalClaimable)}
+                </p>
+              )}
+            </div>
           </div>
-          <div>
-            <p className="text-xs font-mono text-muted uppercase tracking-widest">Income history</p>
-            {primarySymbol && (
-              <p className="text-sm font-mono text-white tabular-nums mt-0.5">
-                {parseFloat(formatUnits(totalWithdrawn, primaryDecimals)).toFixed(2)}
-                <span className="text-muted ml-1 text-xs">{primarySymbol}</span>
-              </p>
-            )}
+          <ArrowRight size={13} className="text-muted group-hover:text-accent transition-colors shrink-0" />
+        </button>
+
+        <button
+          onClick={() => navigate('/app/history')}
+          className="card flex items-center justify-between gap-3 hover:border-accent/30 hover:bg-accent/[0.02] transition-all text-left group"
+        >
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl border border-border bg-dark flex items-center justify-center text-muted group-hover:text-accent group-hover:border-accent/30 transition-colors shrink-0">
+              <Clock size={14} />
+            </div>
+            <div>
+              <p className="text-[10px] font-mono text-muted uppercase tracking-widest">History</p>
+              {primarySymbol && (
+                <p className="text-sm font-mono text-white tabular-nums mt-0.5">
+                  {fmtRaw(totalWithdrawn)}
+                </p>
+              )}
+            </div>
           </div>
-        </div>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-          className="text-muted group-hover:text-accent transition-colors shrink-0">
-          <path d="M9 18l6-6-6-6" />
-        </svg>
-      </button>
+          <ArrowRight size={13} className="text-muted group-hover:text-accent transition-colors shrink-0" />
+        </button>
+      </div>
 
       {/* ── Active streams ─────────────────────────────────────────────────── */}
       <div>
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-xs font-mono text-muted uppercase tracking-widest">Current streams</h2>
           <div className="flex items-center gap-2">
-            {received.length > 0 && <span className="text-xs text-muted font-mono">{received.length} total</span>}
-            {totalClaimable > 0n && (
-              <button
-                onClick={() => setWithdrawOpen(true)}
-                className="text-xs font-medium text-accent hover:text-white transition-colors border border-accent/20 hover:border-accent/40 px-3 py-1 rounded-lg"
-              >
-                Withdraw all →
-              </button>
+            {activeStreams.length > 0 && (
+              <span className="text-xs text-muted font-mono">{activeStreams.length} active</span>
             )}
           </div>
         </div>
@@ -536,39 +614,49 @@ export default function ContractorDashboard() {
               </div>
             ))}
           </div>
-        ) : received.length === 0 ? (
+        ) : visibleStreams.length === 0 ? (
           <div className="card border-dashed border-border/50 flex flex-col items-center justify-center py-14 text-center">
             <div className="w-12 h-12 rounded-2xl bg-surface border border-border flex items-center justify-center mb-3">
               <Inbox size={20} className="text-muted" />
             </div>
-            <p className="font-medium mb-1 text-sm">No incoming streams</p>
-            <p className="text-muted text-xs max-w-xs">When a company starts streaming to your wallet, it will appear here with a live balance.</p>
+            {received.length > 0 ? (
+              <>
+                <p className="font-medium mb-1 text-sm">All caught up</p>
+                <p className="text-muted text-xs max-w-xs">All your streams have been fully claimed. Check your Income or History pages for records.</p>
+                <div className="flex items-center gap-2 mt-4">
+                  <button className="btn-outline text-xs" onClick={() => navigate('/app/income')}>Income</button>
+                  <button className="btn-outline text-xs" onClick={() => navigate('/app/history')}>History</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="font-medium mb-1 text-sm">No incoming streams</p>
+                <p className="text-muted text-xs max-w-xs">When a company starts streaming to your wallet, it will appear here with a live balance.</p>
+              </>
+            )}
           </div>
         ) : (
-          <div className="flex flex-col gap-3 max-h-[520px] overflow-y-auto pr-1">
-            {received.map((s, i) => (
-              <StreamCard
-                key={s.streamId}
-                streamId={s.streamId}
-                role="contractor"
-                chainId={s.chainId ?? streamChainId}
-                batchManaged
-                batchLoading={batchLoading}
-                streamData={s.streamValidUntil ? s : undefined}
-                rawBalance={balData?.[i] ?? s.rawBalance ?? undefined}
-              />
-            ))}
+          <div className="flex flex-col gap-3">
+            {visibleStreams.map((s) => {
+              // Find original index in received[] for balData lookup
+              const i = received.findIndex(r => r.streamId === s.streamId);
+              return (
+                <StreamCard
+                  key={s.streamId}
+                  streamId={s.streamId}
+                  role="contractor"
+                  chainId={s.chainId ?? streamChainId}
+                  batchManaged
+                  batchLoading={batchLoading}
+                  streamData={s.streamValidUntil ? s : undefined}
+                  rawBalance={balData?.[i] ?? s.rawBalance ?? undefined}
+                />
+              );
+            })}
           </div>
         )}
       </div>
 
-      {/* ── Withdraw modal ──────────────────────────────────────────────────── */}
-      <WithdrawModal
-        open={withdrawOpen}
-        onClose={() => setWithdrawOpen(false)}
-        streams={enriched.filter(e => e.rawBalance > 0n)}
-        chainId={chainId}
-      />
     </div>
   );
 }

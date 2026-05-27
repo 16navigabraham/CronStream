@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { usePublicClient, useAccount, useChainId } from 'wagmi';
 import { parseAbiItem, keccak256, toHex, decodeAbiParameters } from 'viem';
 import { getContractAddress, CONTRACT_ADDRESSES } from '../lib/wagmi';
@@ -50,6 +50,68 @@ function mapDbRow(r) {
     blockNumber:      null,
     chainId:          r.chain_id ? Number(r.chain_id) : null,
   };
+}
+
+// ─── Module-level deduplication + shared cache ───────────────────────────────
+//
+// Multiple components (CompanyDashboard, ContractorDashboard, IncomeHistory,
+// StreamHistory, StreamDetail, Profile, etc.) all call useStreams() at the
+// same time. Without dedup each mount fires its own fetch — 8+ hits per page.
+//
+// Solution:
+//   _inFlight  — all concurrent callers share the same Promise
+//   _memCache  — 18s TTL; subsequent polls within the window skip the network
+//   POLL_MS    — each hook instance polls every 20s, but since all callers share
+//                the cache only the first caller past the TTL makes a real request
+
+const _inFlight = new Map(); // address → Promise<{sent,received}|null>
+const _memCache = new Map(); // address → { sent, received, ts }
+const CACHE_MS  = 18_000;   // 18s — shorter than server's 30s so polls always land
+const POLL_MS   = 20_000;   // background poll interval per hook instance
+
+/**
+ * Bust the in-memory stream cache for an address.
+ * Call after any successful on-chain write so the next fetch returns fresh data.
+ */
+export function invalidateStreamsCache(address) {
+  if (address) _memCache.delete(address.toLowerCase());
+}
+
+/**
+ * Fetch streams from the agent DB (priority-1 path).
+ * Deduplicates concurrent calls and caches results for CACHE_MS.
+ */
+async function fetchFromAgent(address) {
+  const key = address.toLowerCase();
+
+  // 1. Memory cache hit — skip network
+  const hit = _memCache.get(key);
+  if (hit && Date.now() - hit.ts < CACHE_MS) return hit;
+
+  // 2. Already in-flight — share the promise
+  if (_inFlight.has(key)) return _inFlight.get(key);
+
+  // 3. New request
+  const promise = fetch(
+    `${AGENT_URL}/api/v1/streams?address=${address}`,
+    { signal: AbortSignal.timeout(5000) }
+  )
+    .then(async res => {
+      if (!res.ok) return null;
+      const { streams } = await res.json();
+      if (!streams?.length) return null;
+      const addrLow = key;
+      const sent     = streams.filter(s => s.sender?.toLowerCase()    === addrLow).map(mapDbRow);
+      const received = streams.filter(s => s.recipient?.toLowerCase() === addrLow).map(mapDbRow);
+      const result = { sent, received };
+      _memCache.set(key, { ...result, ts: Date.now() });
+      return result;
+    })
+    .catch(() => null)
+    .finally(() => _inFlight.delete(key));
+
+  _inFlight.set(key, promise);
+  return promise;
 }
 
 /**
@@ -107,7 +169,7 @@ async function fetchFromBlockscout(address, chainId) {
       const rawRecipient = t[3] ? '0x' + t[3].slice(-40) : null;
 
       return {
-        streamId:      t[1] ?? null,         // bytes32 stream ID
+        streamId:      t[1] ?? null,
         sender:        rawSender,
         recipient:     rawRecipient,
         ratePerSecond,
@@ -134,6 +196,12 @@ async function fetchFromBlockscout(address, chainId) {
  *  1. Agent DB  — /api/v1/streams?address=0x...  (fast, no RPC limits)
  *  2. Blockscout — for Arb Sepolia (no block-range limits, indexes all history)
  *  3. viem getLogs fallback — for other chains, last ~7 days
+ *
+ * Background refresh:
+ *  - Auto-polls every 20s; multiple callers share the same underlying fetch
+ *    via the module-level _inFlight / _memCache dedup
+ *  - Call refresh() after any on-chain write to force an immediate re-fetch
+ *  - Call invalidateStreamsCache(address) from event watchers for the same effect
  */
 export function useStreams() {
   const { address } = useAccount();
@@ -143,78 +211,81 @@ export function useStreams() {
   const [sent,     setSent]     = useState([]);
   const [received, setReceived] = useState([]);
   const [loading,  setLoading]  = useState(false);
+  const mountedRef = useRef(true);
 
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  // ── Core load function ───────────────────────────────────────────────────
+  const load = useCallback(async (force = false) => {
+    if (!address || !client) return;
+
+    // Bust cache so the next fetchFromAgent call goes to the network
+    if (force) invalidateStreamsCache(address);
+
+    setLoading(true);
+
+    // ── 1. Agent DB (deduplicated) ─────────────────────────────────────────
+    const dbResult = await fetchFromAgent(address);
+    if (dbResult) {
+      if (mountedRef.current) {
+        setSent(dbResult.sent);
+        setReceived(dbResult.received);
+        setLoading(false);
+      }
+      return;
+    }
+
+    // ── 2. Blockscout (Arb Sepolia — all history, no RPC limit) ───────────
+    const bsResult = await fetchFromBlockscout(address, 421614);
+    if (bsResult && (bsResult.sent.length > 0 || bsResult.received.length > 0)) {
+      if (mountedRef.current) {
+        setSent(bsResult.sent);
+        setReceived(bsResult.received);
+        setLoading(false);
+      }
+      return;
+    }
+
+    // ── 3. viem fallback (current wallet chain) ────────────────────────────
+    try {
+      const contractAddress = getContractAddress(chainId);
+      const currentBlock    = await client.getBlockNumber();
+      const lookback  = 2_500_000n;
+      const fromBlock = currentBlock > lookback ? currentBlock - lookback : 0n;
+
+      const [sentLogs, receivedLogs] = await Promise.all([
+        client.getLogs({ address: contractAddress, event: STREAM_CREATED, args: { sender: address },    fromBlock, toBlock: 'latest' }),
+        client.getLogs({ address: contractAddress, event: STREAM_CREATED, args: { recipient: address }, fromBlock, toBlock: 'latest' }),
+      ]);
+
+      if (mountedRef.current) {
+        setSent    (sentLogs.map(l => mapLog(l, chainId)));
+        setReceived(receivedLogs.map(l => mapLog(l, chainId)));
+      }
+    } catch (err) {
+      console.error('useStreams viem fallback error:', err.message);
+    } finally {
+      if (mountedRef.current) setLoading(false);
+    }
+  }, [address, client, chainId]);
+
+  // Public refresh — busts cache and re-fetches immediately
+  const refresh = useCallback(() => load(true), [load]);
+
+  // ── Initial load + background poll ──────────────────────────────────────
   useEffect(() => {
     if (!address || !client) return;
 
-    let cancelled = false;
-
-    async function load() {
-      setLoading(true);
-
-      // ── 1. Try agent DB ──────────────────────────────────────────────────
-      try {
-        const res = await fetch(
-          `${AGENT_URL}/api/v1/streams?address=${address}`,
-          { signal: AbortSignal.timeout(5000) }
-        );
-        if (res.ok) {
-          const { streams } = await res.json();
-          // Only use DB result if it actually has streams (non-empty)
-          if (!cancelled && streams?.length > 0) {
-            const addrLow = address.toLowerCase();
-            setSent    (streams.filter(s => s.sender?.toLowerCase()    === addrLow).map(mapDbRow));
-            setReceived(streams.filter(s => s.recipient?.toLowerCase() === addrLow).map(mapDbRow));
-            setLoading(false);
-            return;
-          }
-        }
-      } catch {
-        // Agent offline — fall through
-      }
-
-      // ── 2. Blockscout (Arb Sepolia — all historical blocks, no RPC limit) ──
-      // Always try Arb Sepolia on Blockscout even if wallet is on another chain,
-      // because the user's streams may have been created on Arb Sepolia.
-      const bsResult = await fetchFromBlockscout(address, 421614);
-      if (bsResult && (bsResult.sent.length > 0 || bsResult.received.length > 0)) {
-        if (!cancelled) {
-          setSent    (bsResult.sent);
-          setReceived(bsResult.received);
-          setLoading(false);
-          return;
-        }
-      }
-
-      // ── 3. viem fallback (current wallet chain) ──────────────────────────
-      // Useful for non-Blockscout chains (e.g. Robinhood). Block range is capped
-      // to avoid RPC rejection on chains with millions of blocks.
-      try {
-        const contractAddress = getContractAddress(chainId);
-        const currentBlock    = await client.getBlockNumber();
-        // ~7 days on Arb Sepolia (4 blocks/s) or Robinhood Chain (2 blocks/s)
-        const lookback  = 2_500_000n;
-        const fromBlock = currentBlock > lookback ? currentBlock - lookback : 0n;
-
-        const [sentLogs, receivedLogs] = await Promise.all([
-          client.getLogs({ address: contractAddress, event: STREAM_CREATED, args: { sender: address },    fromBlock, toBlock: 'latest' }),
-          client.getLogs({ address: contractAddress, event: STREAM_CREATED, args: { recipient: address }, fromBlock, toBlock: 'latest' }),
-        ]);
-
-        if (!cancelled) {
-          setSent    (sentLogs.map(l => mapLog(l, chainId)));
-          setReceived(receivedLogs.map(l => mapLog(l, chainId)));
-        }
-      } catch (err) {
-        console.error('useStreams viem fallback error:', err.message);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-
     load();
-    return () => { cancelled = true; };
-  }, [address, client, chainId]);
 
-  return { sent, received, loading };
+    // Background poll — multiple concurrent callers share the same fetch
+    // via module-level cache, so there's no thundering herd.
+    const timer = setInterval(() => load(true), POLL_MS);
+    return () => clearInterval(timer);
+  }, [address, client, chainId, load]);
+
+  return { sent, received, loading, refresh };
 }

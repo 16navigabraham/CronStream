@@ -570,7 +570,7 @@ export default function Landing() {
                     <div key={ticker}
                       className="border border-border rounded-xl px-3 py-3 flex flex-col items-center gap-2 bg-surface hover:border-accent/30 transition-colors">
                       <img
-                        src={`https://logo.clearbit.com/${domain}`}
+                        src={`https://www.google.com/s2/favicons?domain=${domain}&sz=64`}
                         alt={name}
                         className="w-7 h-7 rounded-lg object-contain"
                         onError={e => { e.target.style.display = 'none'; }}

@@ -30,9 +30,10 @@ export default function LiveBalance({
   const baseRef  = useRef(null);  // { value: number, fetchedAt: number }
   const frameRef = useRef(null);
 
-  const isExpired = streamValidUntil
-    ? BigInt(Math.floor(Date.now() / 1000)) >= streamValidUntil
-    : false;
+  // 0n is falsy in JS so we must check explicitly.
+  // Any streamValidUntil that is zero or in the past = expired.
+  const nowSec    = BigInt(Math.floor(Date.now() / 1000));
+  const isExpired = !streamValidUntil || nowSec >= streamValidUntil;
 
   // ── Internal read — only fires when no controlled balance is provided ────────
   const { data: onChainBalance } = useReadContract({
@@ -46,8 +47,9 @@ export default function LiveBalance({
     },
   });
 
-  // The effective balance — controlled prop wins over internal fetch
-  const effectiveBalance = controlledBalance ?? onChainBalance ?? null;
+  // The effective balance — controlled prop wins over internal fetch.
+  // Treat 0n as a valid balance (stream fully withdrawn), only skip if truly null/undefined.
+  const effectiveBalance = (controlledBalance != null) ? controlledBalance : (onChainBalance ?? null);
 
   // Anchor the ticker whenever the balance value changes
   useEffect(() => {

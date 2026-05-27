@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 interface ICronStream {
    
 
-function createStream(address recipient, address token, uint256 ratePerSecond, uint256 initialDurationSeconds) external returns (bytes32 streamId);
+function createStream(address recipient, address token, uint256 ratePerSecond, uint256 initialDurationSeconds, uint256 depositAmount) external returns (bytes32 streamId);
 function extendStreamWindowWithSignature(bytes32 streamId, uint256 extensionDurationSeconds, uint256 expiry, bytes calldata signature) external;
 function withdrawFromStream(bytes32 streamId, uint256 amount) external;
 function balanceOf(bytes32 streamId) external view returns (uint256 withdrawableAmount);

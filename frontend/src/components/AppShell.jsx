@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useAccount, useDisconnect } from 'wagmi';
-import { LayoutDashboard, Settings, Plus, LogOut, TrendingUp, ChevronRight, UserCircle2, SlidersHorizontal } from 'lucide-react';
+import { LayoutDashboard, Settings, Plus, LogOut, Clock, TrendingUp, UserCircle2, SlidersHorizontal } from 'lucide-react';
 import { useProfile } from '../hooks/useProfile';
 import { useCreateStream } from '../context/CreateStreamContext';
 import CreateStreamModal from './CreateStreamModal';
@@ -26,19 +26,23 @@ export default function AppShell() {
   const isContractor = profile?.role === 'contractor';
 
   const NAV = [
-    { to: '/app/dashboard', label: 'Dashboard', icon: <LayoutDashboard size={15} />,   show: true },
-    { to: '/app/income',    label: 'Income',    icon: <TrendingUp size={15} />,         show: isContractor },
-    { to: '/app/profile',   label: 'Profile',   icon: <UserCircle2 size={15} />,        show: true },
-    { to: '/app/settings',  label: 'Settings',  icon: <SlidersHorizontal size={15} />, show: isCompany },
+    { to: '/app/dashboard',       label: 'Dashboard', icon: <LayoutDashboard size={15} />,   show: true },
+    { to: '/app/income',          label: 'Income',    icon: <TrendingUp size={15} />,         show: isContractor },
+    { to: '/app/history',         label: 'History',   icon: <Clock size={15} />,              show: isContractor },
+    { to: '/app/company-history', label: 'History',   icon: <Clock size={15} />,              show: isCompany },
+    { to: '/app/profile',         label: 'Profile',   icon: <UserCircle2 size={15} />,        show: true },
+    { to: '/app/settings',        label: 'Settings',  icon: <SlidersHorizontal size={15} />, show: isCompany },
   ].filter(n => n.show);
 
   // Limelight nav items for mobile
   const mobileNavItems = [
-    { id: 'dashboard', to: '/app/dashboard', label: 'Dashboard', icon: <LayoutDashboard /> },
-    ...(isContractor ? [{ id: 'income',   to: '/app/income',   label: 'Income',   icon: <TrendingUp /> }] : []),
-    ...(isCompany    ? [{ id: 'stream',                         label: 'Stream',   icon: <Plus />, onClick: openModal }] : []),
-    { id: 'profile',   to: '/app/profile',   label: 'Profile',   icon: <UserCircle2 /> },
-    ...(isCompany    ? [{ id: 'settings', to: '/app/settings', label: 'Settings', icon: <SlidersHorizontal /> }] : []),
+    { id: 'dashboard',       to: '/app/dashboard',       label: 'Dashboard', icon: <LayoutDashboard /> },
+    ...(isContractor ? [{ id: 'income',          to: '/app/income',          label: 'Income',   icon: <TrendingUp /> }] : []),
+    ...(isContractor ? [{ id: 'history',         to: '/app/history',         label: 'History',  icon: <Clock /> }] : []),
+    ...(isCompany    ? [{ id: 'stream',                                       label: 'Stream',   icon: <Plus />, onClick: openModal }] : []),
+    ...(isCompany    ? [{ id: 'company-history', to: '/app/company-history', label: 'History',  icon: <Clock /> }] : []),
+    { id: 'profile',         to: '/app/profile',         label: 'Profile',   icon: <UserCircle2 /> },
+    ...(isCompany    ? [{ id: 'settings',        to: '/app/settings',        label: 'Settings', icon: <SlidersHorizontal /> }] : []),
   ];
 
   const initials = profile?.name
@@ -56,9 +60,6 @@ export default function AppShell() {
           <img src="/logo.png" alt="CronStream" className="w-6 h-6 rounded-md object-contain" />
           <span className="text-white font-semibold text-sm tracking-tight">CronStream</span>
         </div>
-        {profile?.role && (
-          <div className="mt-1 text-xs text-muted capitalize ml-8">{profile.role}</div>
-        )}
       </div>
 
       {/* Company CTA */}
@@ -124,15 +125,9 @@ export default function AppShell() {
                     }
                   </div>
                   <div className="flex-1 min-w-0">
-                    {profile?.username
-                      ? <>
-                          <div className="text-[10px] text-muted font-mono truncate leading-tight">@{profile.username}</div>
-                          <div className="text-xs font-semibold text-white truncate leading-tight">{profile.name || account.address.slice(0, 10)}</div>
-                        </>
-                      : <div className="text-xs font-semibold text-white truncate leading-tight">
-                          {profile?.name || `${account.address.slice(0, 6)}…${account.address.slice(-4)}`}
-                        </div>
-                    }
+                    <div className="text-xs font-mono text-white truncate leading-tight">
+                      {profile?.username ? `@${profile.username}` : `${account.address.slice(0, 6)}…${account.address.slice(-4)}`}
+                    </div>
                   </div>
                   {profile?.role && (
                     <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-full border shrink-0

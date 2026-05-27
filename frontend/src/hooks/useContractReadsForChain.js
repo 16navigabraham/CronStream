@@ -7,8 +7,9 @@
  */
 
 import { useState, useEffect } from 'react';
-import { createPublicClient, http } from 'viem';
+import { createPublicClient, http, parseAbi } from 'viem';
 import { arbitrumSepolia } from 'wagmi/chains';
+import { robinhoodTestnet } from '../lib/wagmi';
 
 // RPC URLs per chain — mirrors wagmi.js transports
 const RPC_URLS = {
@@ -16,7 +17,7 @@ const RPC_URLS = {
   46630:  import.meta.env.VITE_ROBINHOOD_RPC   ?? 'https://rpc.testnet.chain.robinhood.com',
 };
 
-const VIEM_CHAINS = { 421614: arbitrumSepolia };
+const VIEM_CHAINS = { 421614: arbitrumSepolia, 46630: robinhoodTestnet };
 
 // Module-level client cache — one client per chainId, created once
 const clientCache = {};
@@ -65,14 +66,20 @@ export function useContractReadsForChain({ chainId, calls, enabled = true, refet
     async function fetchAll() {
       try {
         const settled = await Promise.allSettled(
-          calls.map(c =>
-            client.readContract({
+          calls.map(c => {
+            // viem's direct readContract needs a parsed Abi (array of objects).
+            // wagmi hooks auto-parse human-readable strings, but we're calling
+            // viem directly here — so parse strings ourselves.
+            const abi = Array.isArray(c.abi) && typeof c.abi[0] === 'string'
+              ? parseAbi(c.abi)
+              : c.abi;
+            return client.readContract({
               address:      c.address,
-              abi:          c.abi,
+              abi,
               functionName: c.functionName,
               args:         c.args ?? [],
-            })
-          )
+            });
+          })
         );
         if (!cancelled) {
           const values = settled.map(r => (r.status === 'fulfilled' ? r.value : undefined));

@@ -12,7 +12,9 @@ import Dashboard     from './pages/app/Dashboard';
 import StreamDetail  from './pages/app/StreamDetail';
 import Settings      from './pages/app/Settings';
 import Profile       from './pages/app/Profile';
-import IncomeHistory from './pages/app/IncomeHistory';
+import IncomeHistory  from './pages/app/IncomeHistory';
+import StreamHistory  from './pages/app/StreamHistory';
+import CompanyHistory from './pages/app/CompanyHistory';
 import AppShell     from './components/AppShell';
 import LogoLoader   from './components/LogoLoader';
 
@@ -47,6 +49,8 @@ export default function App() {
         <Route path="stream/:id"    element={<StreamDetail />} />
         <Route path="withdraw"      element={<Navigate to="/app/dashboard" replace />} />
         <Route path="income"        element={<IncomeHistory />} />
+        <Route path="history"           element={<StreamHistory />} />
+        <Route path="company-history"  element={<CompanyHistory />} />
         <Route path="profile"       element={<Profile />} />
         <Route path="settings"      element={<Settings />} />
       </Route>

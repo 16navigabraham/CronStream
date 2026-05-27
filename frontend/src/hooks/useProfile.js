@@ -1,15 +1,61 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
-const AGENT_URL   = import.meta.env.VITE_AGENT_URL ?? 'http://localhost:3000';
-const CACHE_KEY   = addr => `cronstream_profile_${addr?.toLowerCase()}`;
+const AGENT_URL = import.meta.env.VITE_AGENT_URL ?? 'http://localhost:3000';
+const CACHE_KEY = addr => `cronstream_profile_${addr?.toLowerCase()}`;
+
+// ─── Module-level deduplication ──────────────────────────────────────────────
+// Multiple components (AppShell, Dashboard, CreateStreamModal, etc.) all call
+// useProfile(address) independently. Without deduplication each mount fires its
+// own network request, hammering the server with 5-10 identical GETs per page.
+//
+// Solution: share a single in-flight promise per address + a 30-second memory
+// cache. Every concurrent caller waits on the same fetch; rapid re-mounts skip
+// the network entirely and read from the module cache.
+
+const _inFlight = new Map();  // address → Promise<serverProfile | null>
+const _memCache = new Map();  // address → { profile, ts }
+const MEM_TTL   = 30_000;     // 30 s — skip re-fetch if result is this fresh
+
+function fetchFromServer(address) {
+  const key = address.toLowerCase();
+
+  // 1. Memory cache hit — skip network
+  const hit = _memCache.get(key);
+  if (hit && Date.now() - hit.ts < MEM_TTL) {
+    return Promise.resolve(hit.profile);
+  }
+
+  // 2. Already in-flight — share the promise
+  if (_inFlight.has(key)) return _inFlight.get(key);
+
+  // 3. New request
+  const promise = fetch(`${AGENT_URL}/api/v1/profile/${address}`)
+    .then(res => {
+      if (!res.ok) return null;
+      return res.json().then(({ profile }) => {
+        _memCache.set(key, { profile, ts: Date.now() });
+        return profile;
+      });
+    })
+    .catch(() => null)
+    .finally(() => _inFlight.delete(key));
+
+  _inFlight.set(key, promise);
+  return promise;
+}
+
+/** Invalidate the memory cache for an address (call after saveProfile). */
+function invalidateCache(address) {
+  _memCache.delete(address?.toLowerCase());
+}
 
 /**
  * useProfile — server-backed profile using the agent-node Turso DB.
  *
  * Flow:
  *   1. Immediately load from localStorage cache (fast render, no flash)
- *   2. Fetch from server in background and reconcile
- *   3. saveProfile() POSTs to server + updates cache
+ *   2. Fetch from server (deduplicated — shared across all concurrent callers)
+ *   3. saveProfile() POSTs to server + updates both caches
  *
  * Role is immutable after first save — the server enforces this.
  */
@@ -23,48 +69,39 @@ export function useProfile(address) {
   });
   const [loading,  setLoading]  = useState(false);
   const [synced,   setSynced]   = useState(false);
-  const abortRef = useRef(null);
+  const mountedRef = useRef(true);
 
-  // ── Fetch from server ───────────────────────────────────────────────────
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  // ── Fetch from server (deduplicated) ────────────────────────────────────
   useEffect(() => {
     if (!address) return;
 
-    abortRef.current?.abort();
-    abortRef.current = new AbortController();
+    setLoading(true);
 
-    async function fetchProfile() {
-      setLoading(true);
-      try {
-        const res = await fetch(`${AGENT_URL}/api/v1/profile/${address}`, {
-          signal: abortRef.current.signal,
-        });
-        if (res.ok) {
-          const { profile: serverProfile } = await res.json();
-          // Normalise snake_case DB fields → camelCase local shape
-          const enriched = {
-            ...serverProfile,
-            address,
-            avatar: serverProfile.avatar_url ?? serverProfile.avatar ?? null,
-          };
-          setProfile(enriched);
-          localStorage.setItem(CACHE_KEY(address), JSON.stringify(enriched));
-        }
-        // 404 means no profile yet — keep whatever is in cache
-      } catch (err) {
-        if (err.name !== 'AbortError') {
-          console.warn('[useProfile] Server fetch failed, using cache:', err.message);
-        }
-      } finally {
-        setLoading(false);
-        setSynced(true);
+    fetchFromServer(address).then(serverProfile => {
+      if (!mountedRef.current) return;
+      if (serverProfile) {
+        const enriched = {
+          ...serverProfile,
+          address,
+          avatar: serverProfile.avatar_url ?? serverProfile.avatar ?? null,
+        };
+        setProfile(enriched);
+        localStorage.setItem(CACHE_KEY(address), JSON.stringify(enriched));
       }
-    }
-
-    fetchProfile();
-    return () => abortRef.current?.abort();
+      // 404 / null → keep whatever is in localStorage cache
+    }).finally(() => {
+      if (!mountedRef.current) return;
+      setLoading(false);
+      setSynced(true);
+    });
   }, [address]);
 
-  // ── Save to server + cache ──────────────────────────────────────────────
+  // ── Save to server + caches ──────────────────────────────────────────────
   const saveProfile = useCallback(async (data) => {
     if (!address) return;
 
@@ -74,18 +111,19 @@ export function useProfile(address) {
       role:                 data.role,
       name:                 data.name                 ?? null,
       github:               data.github               ?? null,
-      twitter:              data.twitter               ?? null,
-      linkedin:             data.linkedin              ?? null,
-      farcaster:            data.farcaster             ?? null,
-      website:              data.website               ?? null,
-      avatarUrl:            data.avatar                ?? null,
+      twitter:              data.twitter              ?? null,
+      linkedin:             data.linkedin             ?? null,
+      farcaster:            data.farcaster            ?? null,
+      website:              data.website              ?? null,
+      avatarUrl:            data.avatar               ?? null,
       jira_url:             data.jira_url             ?? null,
       jira_email:           data.jira_email           ?? null,
       jira_token:           data.jira_token           ?? null,
       bitbucket_workspace:  data.bitbucket_workspace  ?? null,
       bitbucket_user:       data.bitbucket_user       ?? null,
       bitbucket_password:   data.bitbucket_password   ?? null,
-      figma_token:          data.figma_token           ?? null,
+      figma_token:          data.figma_token          ?? null,
+      display_currency:     data.display_currency     ?? null,
       ...(data.apiKey !== undefined ? { apiKey: data.apiKey } : {}),
     };
 
@@ -93,6 +131,9 @@ export function useProfile(address) {
     const optimistic = { ...payload, avatar: data.avatar };
     setProfile(optimistic);
     localStorage.setItem(CACHE_KEY(address), JSON.stringify(optimistic));
+
+    // Bust the memory cache so next mount re-fetches fresh data
+    invalidateCache(address);
 
     try {
       const res = await fetch(`${AGENT_URL}/api/v1/profile`, {
@@ -109,17 +150,13 @@ export function useProfile(address) {
         };
         setProfile(enriched);
         localStorage.setItem(CACHE_KEY(address), JSON.stringify(enriched));
+        // Populate memory cache with the canonical server response
+        _memCache.set(address.toLowerCase(), { profile: serverProfile, ts: Date.now() });
       }
     } catch (err) {
       console.warn('[useProfile] Save to server failed (cache preserved):', err.message);
     }
   }, [address]);
 
-  return {
-    profile,
-    saveProfile,
-    loading,
-    synced,
-    hasProfile: !!profile,
-  };
+  return { profile, saveProfile, loading, synced, hasProfile: !!profile };
 }
