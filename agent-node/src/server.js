@@ -17,7 +17,7 @@ import rateLimit from 'express-rate-limit';
 import { verifyMilestone, VerificationError } from './verifyMilestone.js';
 import { signExtensionVoucher, getSignerAddress } from './agentSigner.js';
 import { submitExtension, getAllBalances }                    from './chainSubmitter.js';
-import { initDb, isAlreadyProcessed, recordExtension, getExtensionCount, registerStream, getStream, getDb, upsertProfile, getProfile, getProfileByUsername, getProfileByApiKey, searchProfiles, isUsernameTaken, addToWaitlist, getWaitlistCount } from './db.js';
+import { initDb, isAlreadyProcessed, recordExtension, getExtensionCount, registerStream, getStream, getStreamsForAddress, getDb, upsertProfile, getProfile, getProfileByUsername, getProfileByApiKey, searchProfiles, isUsernameTaken, addToWaitlist, getWaitlistCount } from './db.js';
 import { publicProfile } from './encryption.js';
 import publicApiRouter        from './publicApi.js';
 import { startStreamListeners } from './streamListener.js';
@@ -764,6 +764,27 @@ app.get('/api/v1/stream-status/:streamId', async (req, res) => {
   } catch (err) {
     console.error('[stream-status] Error:', err);
     return res.status(500).json({ error: 'Failed to fetch stream status' });
+  }
+});
+
+// ─── GET /api/v1/streams?address=0x... ───────────────────────────────────────
+//
+// Returns all streams for a given sender or recipient address from the agent DB.
+// Faster and more reliable than scanning blockchain events from the frontend.
+
+app.get('/api/v1/streams', async (req, res) => {
+  const { address } = req.query;
+
+  if (!address || !/^0x[a-fA-F0-9]{40}$/i.test(address)) {
+    return res.status(400).json({ error: 'Invalid or missing address' });
+  }
+
+  try {
+    const streams = await getStreamsForAddress(address);
+    return res.json({ address, streams });
+  } catch (err) {
+    console.error('[streams] Error:', err);
+    return res.status(500).json({ error: 'Failed to fetch streams' });
   }
 });
 

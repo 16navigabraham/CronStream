@@ -257,6 +257,22 @@ export async function registerStream({
 }
 
 /**
+ * Return all streams where address is sender OR recipient.
+ * Used by the frontend instead of scanning blockchain events.
+ */
+export async function getStreamsForAddress(address) {
+  const db = getDb();
+  if (!db) return [];
+  const result = await db.execute({
+    sql:  `SELECT * FROM stream_registry
+           WHERE LOWER(sender) = ? OR LOWER(recipient) = ?
+           ORDER BY created_at DESC`,
+    args: [address.toLowerCase(), address.toLowerCase()],
+  });
+  return result.rows;
+}
+
+/**
  * Look up a stream's registered metadata.
  */
 export async function getStream(streamId) {

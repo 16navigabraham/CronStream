@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useAccount, useDisconnect } from 'wagmi';
-import { LayoutDashboard, Settings, Plus, LogOut, TrendingUp, ChevronRight } from 'lucide-react';
+import { LayoutDashboard, Settings, Plus, LogOut, TrendingUp, ChevronRight, UserCircle2, SlidersHorizontal } from 'lucide-react';
 import { useProfile } from '../hooks/useProfile';
 import { useCreateStream } from '../context/CreateStreamContext';
 import CreateStreamModal from './CreateStreamModal';
@@ -26,10 +26,10 @@ export default function AppShell() {
   const isContractor = profile?.role === 'contractor';
 
   const NAV = [
-    { to: '/app/dashboard', label: 'Dashboard', icon: <LayoutDashboard size={15} />, show: true },
-    { to: '/app/income',    label: 'Income',    icon: <TrendingUp size={15} />,      show: isContractor },
-    { to: '/app/profile',   label: 'Profile',   icon: <Settings size={15} />,        show: true },
-    { to: '/app/settings',  label: 'Settings',  icon: <Settings size={15} />,        show: isCompany },
+    { to: '/app/dashboard', label: 'Dashboard', icon: <LayoutDashboard size={15} />,   show: true },
+    { to: '/app/income',    label: 'Income',    icon: <TrendingUp size={15} />,         show: isContractor },
+    { to: '/app/profile',   label: 'Profile',   icon: <UserCircle2 size={15} />,        show: true },
+    { to: '/app/settings',  label: 'Settings',  icon: <SlidersHorizontal size={15} />, show: isCompany },
   ].filter(n => n.show);
 
   // Limelight nav items for mobile
@@ -37,8 +37,8 @@ export default function AppShell() {
     { id: 'dashboard', to: '/app/dashboard', label: 'Dashboard', icon: <LayoutDashboard /> },
     ...(isContractor ? [{ id: 'income',   to: '/app/income',   label: 'Income',   icon: <TrendingUp /> }] : []),
     ...(isCompany    ? [{ id: 'stream',                         label: 'Stream',   icon: <Plus />, onClick: openModal }] : []),
-    { id: 'profile',   to: '/app/profile',   label: 'Profile',   icon: <Settings /> },
-    ...(isCompany    ? [{ id: 'settings', to: '/app/settings', label: 'Settings', icon: <Settings /> }] : []),
+    { id: 'profile',   to: '/app/profile',   label: 'Profile',   icon: <UserCircle2 /> },
+    ...(isCompany    ? [{ id: 'settings', to: '/app/settings', label: 'Settings', icon: <SlidersHorizontal /> }] : []),
   ];
 
   const initials = profile?.name
@@ -188,38 +188,47 @@ export default function AppShell() {
       <div className="flex-1 flex flex-col lg:ml-56 min-h-screen">
 
         {/* Mobile top bar */}
-        <header className="lg:hidden flex items-center justify-between px-4 py-3 border-b border-border bg-surface/80 backdrop-blur-md sticky top-0 z-20">
-          <button
-            onClick={() => setSidebarOpen(true)}
-            className="w-8 h-8 flex flex-col items-center justify-center gap-1.5 rounded-lg hover:bg-border transition-colors"
-          >
-            <span className="w-5 h-px bg-white" />
-            <span className="w-5 h-px bg-white" />
-            <span className="w-3 h-px bg-white self-start" />
-          </button>
+        <header className="lg:hidden grid grid-cols-3 items-center px-4 py-3 border-b border-border bg-surface/80 backdrop-blur-md sticky top-0 z-20">
+          {/* Left — hamburger */}
+          <div className="flex items-center">
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="w-8 h-8 flex flex-col items-center justify-center gap-1.5 rounded-lg hover:bg-border transition-colors"
+            >
+              <span className="w-5 h-px bg-white" />
+              <span className="w-5 h-px bg-white" />
+              <span className="w-3 h-px bg-white self-start" />
+            </button>
+          </div>
 
-          <img src="/logo.png" alt="CronStream" className="h-6 w-auto object-contain" />
+          {/* Centre — logo always centred */}
+          <div className="flex items-center justify-center">
+            <img src="/logo.png" alt="CronStream" className="h-7 w-7 object-contain rounded-md" />
+          </div>
 
-          <ConnectButton.Custom>
-            {({ account, chain, openAccountModal, openChainModal, mounted }) => {
-              if (!mounted || !account) return <div className="w-8" />;
-              return (
-                <div className="flex items-center gap-1.5">
-                  {(CHAIN_ICONS[chain?.id] || (chain?.hasIcon && chain.iconUrl)) && (
-                    <button onClick={openChainModal} className="w-5 h-5 rounded-full overflow-hidden border border-border">
-                      <img src={CHAIN_ICONS[chain?.id] ?? chain.iconUrl} alt="" className="w-full h-full object-contain" />
+          {/* Right — wallet */}
+          <div className="flex items-center justify-end">
+            <ConnectButton.Custom>
+              {({ account, chain, openAccountModal, openChainModal, mounted }) => {
+                if (!mounted || !account) return <div className="w-8" />;
+                return (
+                  <div className="flex items-center gap-1.5">
+                    {(CHAIN_ICONS[chain?.id] || (chain?.hasIcon && chain.iconUrl)) && (
+                      <button onClick={openChainModal} className="w-5 h-5 rounded-full overflow-hidden border border-border shrink-0">
+                        <img src={CHAIN_ICONS[chain?.id] ?? chain.iconUrl} alt="" className="w-full h-full object-contain" />
+                      </button>
+                    )}
+                    <button
+                      onClick={openAccountModal}
+                      className="text-xs font-mono text-muted bg-surface border border-border px-2 py-1 rounded-lg max-w-[90px] truncate"
+                    >
+                      {profile?.name || `${account.address.slice(0, 4)}…${account.address.slice(-3)}`}
                     </button>
-                  )}
-                  <button
-                    onClick={openAccountModal}
-                    className="text-xs font-mono text-muted bg-surface border border-border px-2.5 py-1 rounded-lg"
-                  >
-                    {profile?.name || `${account.address.slice(0, 6)}…${account.address.slice(-4)}`}
-                  </button>
-                </div>
-              );
-            }}
-          </ConnectButton.Custom>
+                  </div>
+                );
+              }}
+            </ConnectButton.Custom>
+          </div>
         </header>
 
         {/* Page content */}

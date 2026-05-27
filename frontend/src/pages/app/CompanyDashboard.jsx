@@ -167,14 +167,14 @@ export default function CompanyDashboard() {
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div className="mb-6">
         {/* Top row: avatar + name + action button */}
-        <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center justify-between gap-3">
 
           {/* Left: avatar + name */}
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-10 h-10 rounded-xl bg-accent/10 border border-accent/20 flex items-center justify-center shrink-0 overflow-hidden">
+            <div className="w-14 h-14 rounded-2xl bg-accent/10 border border-accent/20 flex items-center justify-center shrink-0 overflow-hidden">
               {profile?.avatar
                 ? <img src={profile.avatar} alt="" className="w-full h-full object-cover" />
-                : <span className="text-accent text-sm font-mono font-bold">{initials}</span>
+                : <span className="text-accent text-base font-mono font-bold">{initials}</span>
               }
             </div>
             <div className="min-w-0">
@@ -188,11 +188,18 @@ export default function CompanyDashboard() {
                 <span className="text-[10px] px-2 py-0.5 rounded-full border border-accent/30 bg-accent/5 text-accent font-mono shrink-0">
                   company
                 </span>
+                {/* Agent dot — mobile only */}
+                {online !== null && (
+                  <span
+                    className={`sm:hidden w-2 h-2 rounded-full shrink-0 ${online ? 'bg-accent pulse-dot' : 'bg-muted/50'}`}
+                    title={online ? 'Agent online' : 'Agent offline'}
+                  />
+                )}
               </div>
 
-              {/* Agent status — mobile: below name; desktop: inline */}
+              {/* Agent status pill — desktop only */}
               {online !== null && (
-                <div className={`mt-1 inline-flex items-center gap-1.5 text-[10px] font-mono px-2.5 py-1 rounded-full border
+                <div className={`hidden sm:inline-flex mt-1 items-center gap-1.5 text-[10px] font-mono px-2.5 py-1 rounded-full border
                   ${online ? 'border-accent/20 bg-accent/5 text-accent' : 'border-border text-muted'}`}>
                   <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${online ? 'bg-accent pulse-dot' : 'bg-muted'}`} />
                   {online ? 'Agent online' : 'Offline'}

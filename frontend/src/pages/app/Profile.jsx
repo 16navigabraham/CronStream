@@ -136,17 +136,17 @@ export default function Profile() {
     <div className="p-4 sm:p-6 w-full">
 
       {/* ── Header ──────────────────────────────────────────────────────────── */}
-      <div className="flex items-start gap-4 mb-6">
+      <div className="flex items-center gap-4 mb-6">
         {/* Avatar */}
         <div className="relative shrink-0 group">
           <div
             onClick={() => avatarRef.current?.click()}
-            className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-accent/10 border border-accent/20
+            className="w-16 h-16 rounded-2xl bg-accent/10 border border-accent/20
               flex items-center justify-center overflow-hidden cursor-pointer"
           >
             {form.avatar
               ? <img src={form.avatar} alt="avatar" className="w-full h-full object-cover" />
-              : <span className="text-accent text-xl sm:text-2xl font-mono font-bold">{initials}</span>
+              : <span className="text-accent text-xl font-mono font-bold">{initials}</span>
             }
           </div>
           <div onClick={() => avatarRef.current?.click()}
@@ -160,7 +160,7 @@ export default function Profile() {
         {/* Identity */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap mb-1">
-            <h1 className="text-lg sm:text-xl font-bold truncate">{form.name || 'Unnamed'}</h1>
+            <h1 className="text-lg font-bold truncate">{form.name || 'Unnamed'}</h1>
             {profile?.username && (
               <span className="text-xs text-muted font-mono">@{profile.username}</span>
             )}

@@ -43,9 +43,9 @@ const AGENT_API_KEY    = process.env.AGENT_API_KEY;
 
 // Stream params — adjust for demo
 const RATE_PER_SECOND    = ethers.parseUnits('0.001', 6); // 0.001 USDC/s = 86.4 USDC/day
-const DURATION_SECONDS   = 86400;                          // 24 hours
-const DEMO_PR_NUMBER     = 42;
-const DEMO_PR_TITLE      = 'feat: add payment processing module';
+const DURATION_SECONDS   = 30000;                          // ~8.3 hours = 30 USDC deposit
+const DEMO_PR_NUMBER     = 2;
+const DEMO_PR_TITLE      = 'Feat/payment module';
 
 // ─── ABIs ─────────────────────────────────────────────────────────────────────
 
@@ -299,14 +299,22 @@ async function main() {
   if (withdrawable === 0n) {
     log('ℹ️', 'Nothing to withdraw yet (stream just started).');
   } else {
-    // Use company wallet as contractor if no separate key provided
-    const contractorSigner = company; // swap for real contractor key in production
+    const contractorKey    = process.env.DEMO_CONTRACTOR_PRIVATE_KEY;
+    const contractorSigner = contractorKey
+      ? new ethers.Wallet(contractorKey, provider)
+      : null;
+
+    if (!contractorSigner) {
+      log('⚠️', 'DEMO_CONTRACTOR_PRIVATE_KEY not set — skipping withdrawal.');
+      log('ℹ️', `Contractor (${CONTRACTOR_ADDR}) can withdraw ${ethers.formatUnits(withdrawable, 6)} USDC manually.`);
+    } else {
     const routerContractor = router.connect(contractorSigner);
 
     const withdrawTx = await routerContractor.withdrawFromStream(streamId, withdrawable);
     console.log(`   Tx: ${withdrawTx.hash}`);
     await withdrawTx.wait(1);
     log('✅', `Contractor received ${ethers.formatUnits(withdrawable, 6)} USDC`);
+    }
   }
 
   // ── Summary ──────────────────────────────────────────────────────────────

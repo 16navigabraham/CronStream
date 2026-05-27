@@ -333,12 +333,12 @@ export default function ContractorDashboard() {
   const { online }  = useAgentStatus();
   const [withdrawOpen, setWithdrawOpen] = useState(false);
 
-  const streamIds    = received.map(s => s.streamId);
   const contractAddr = getContractAddress(chainId);
 
-  // Batch: streams() meta + balanceOf()
-  const metaCalls = streamIds.map(id => ({ address: contractAddr, abi: ROUTER_ABI, functionName: 'streams',    args: [id] }));
-  const balCalls  = streamIds.map(id => ({ address: contractAddr, abi: ROUTER_ABI, functionName: 'balanceOf', args: [id] }));
+  // Memoize to prevent new array refs on every render (avoids wagmi refetch storms)
+  const streamIds = useMemo(() => received.map(s => s.streamId), [received]);
+  const metaCalls = useMemo(() => streamIds.map(id => ({ address: contractAddr, abi: ROUTER_ABI, functionName: 'streams',    args: [id] })), [streamIds, contractAddr]);
+  const balCalls  = useMemo(() => streamIds.map(id => ({ address: contractAddr, abi: ROUTER_ABI, functionName: 'balanceOf', args: [id] })), [streamIds, contractAddr]);
 
   const { data: metaData, dataUpdatedAt } = useReadContracts({
     contracts: metaCalls,
@@ -386,12 +386,12 @@ export default function ContractorDashboard() {
     <div className="p-4 sm:p-6 w-full">
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <div className="flex items-start justify-between gap-4 mb-6 flex-wrap">
+      <div className="flex items-center justify-between gap-4 mb-6 flex-wrap">
         <div className="flex items-center gap-3 min-w-0">
-          <div className="w-11 h-11 rounded-xl bg-accent/10 border border-accent/20 flex items-center justify-center shrink-0 overflow-hidden">
+          <div className="w-14 h-14 rounded-2xl bg-accent/10 border border-accent/20 flex items-center justify-center shrink-0 overflow-hidden">
             {profile?.avatar
               ? <img src={profile.avatar} alt="" className="w-full h-full object-cover" />
-              : <span className="text-accent text-sm font-mono font-bold">{initials}</span>
+              : <span className="text-accent text-base font-mono font-bold">{initials}</span>
             }
           </div>
           <div className="min-w-0">
@@ -399,6 +399,13 @@ export default function ContractorDashboard() {
               <h1 className="text-base font-bold truncate">{profile?.name ?? 'Dashboard'}</h1>
               {profile?.username && <span className="text-xs text-muted font-mono">@{profile.username}</span>}
               <span className="text-[10px] px-2 py-0.5 rounded-full border border-border text-muted font-mono">contractor</span>
+              {/* Agent dot — mobile only */}
+              {online !== null && (
+                <span
+                  className={`sm:hidden w-2 h-2 rounded-full shrink-0 ${online ? 'bg-accent pulse-dot' : 'bg-muted/50'}`}
+                  title={online ? 'Agent online' : 'Agent offline'}
+                />
+              )}
             </div>
             <div className="mt-1.5">
               <MagneticDock profile={profile} />

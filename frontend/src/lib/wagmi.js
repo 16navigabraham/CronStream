@@ -1,6 +1,6 @@
 import { getDefaultConfig } from '@rainbow-me/rainbowkit';
 import { arbitrumSepolia } from 'wagmi/chains';
-import { defineChain } from 'viem';
+import { defineChain, http } from 'viem';
 
 export const robinhoodTestnet = defineChain({
   id:   46630,
@@ -45,4 +45,16 @@ export const wagmiConfig = getDefaultConfig({
   appName:     'CronStream',
   projectId:   import.meta.env.VITE_WALLETCONNECT_PROJECT_ID ?? 'cronstream',
   chains:      [arbitrumSepolia, robinhoodTestnet],
+  transports:  {
+    // Arb Sepolia — use env RPC if set, else public fallback
+    [arbitrumSepolia.id]: http(
+      import.meta.env.VITE_ARB_SEPOLIA_RPC ?? 'https://sepolia-rollup.arbitrum.io/rpc',
+      { timeout: 10_000 }
+    ),
+    // Robinhood Chain — short timeout so SSL failures don't freeze the UI
+    [robinhoodTestnet.id]: http(
+      import.meta.env.VITE_ROBINHOOD_RPC ?? 'https://rpc.testnet.chain.robinhood.com',
+      { timeout: 5_000, retryCount: 1 }
+    ),
+  },
 });
