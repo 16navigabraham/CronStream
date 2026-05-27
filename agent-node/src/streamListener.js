@@ -70,7 +70,7 @@ async function startChainListener(chainId, config) {
         latestBlock,
       );
       for (const evt of pastEvents) {
-        await handleStreamCreated(chainId, config.name, evt);
+        await handleStreamCreated(chainId, config.name, evt, address);
       }
       console.log(`[listener:${config.name}] ✓ Catch-up complete — ${pastEvents.length} event(s) in last ${range} blocks`);
       caught = true;
@@ -107,7 +107,7 @@ async function startChainListener(chainId, config) {
         const to = Math.min(from + MAX_BLOCKS_PER_POLL - 1, currentBlock);
         const events = await contract.queryFilter(contract.filters.StreamCreated(), from, to);
         for (const evt of events) {
-          await handleStreamCreated(chainId, config.name, evt);
+          await handleStreamCreated(chainId, config.name, evt, address);
         }
         from = to + 1;
       }
@@ -127,7 +127,7 @@ async function startChainListener(chainId, config) {
 
 // ─── Event handler ────────────────────────────────────────────────────────────
 
-async function handleStreamCreated(chainId, chainName, evt) {
+async function handleStreamCreated(chainId, chainName, evt, contractAddress) {
   try {
     const { streamId, sender, recipient, ratePerSecond } = evt.args ?? evt;
     if (!streamId) return;
@@ -142,6 +142,7 @@ async function handleStreamCreated(chainId, chainName, evt) {
       // the frontend after creation (or leaves them blank for manual approval)
       verificationSource: 'github',
       verificationTarget: null,
+      contractAddress:    contractAddress ?? null,
     });
 
     console.log(`[listener:${chainName}] ✓ Auto-registered stream ${streamId.slice(0, 10)}… (sender: ${sender?.slice(0, 8)}…)`);

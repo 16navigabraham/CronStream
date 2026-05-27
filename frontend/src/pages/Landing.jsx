@@ -1,204 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { useAccount } from 'wagmi';
 import { useConnectModal } from '@rainbow-me/rainbowkit';
-import { useEffect, useState } from 'react';
-
-const AGENT_URL = import.meta.env.VITE_AGENT_URL ?? 'http://localhost:3000';
-
-function WaitlistSection() {
-  const [email,       setEmail]       = useState('');
-  const [role,        setRole]        = useState('company');
-  const [companyName, setCompanyName] = useState('');
-  const [state,       setState]       = useState('idle'); // idle | loading | success | duplicate | error
-  const [inviteCode,  setInviteCode]  = useState('');
-  const [copied,      setCopied]      = useState(false);
-
-  async function handleSubmit(e) {
-    e.preventDefault();
-    if (!email) return;
-    setState('loading');
-    try {
-      const res = await fetch(`${AGENT_URL}/api/v1/waitlist`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ email, role, companyName }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setState(data.alreadyRegistered ? 'duplicate' : 'error');
-        return;
-      }
-      if (data.inviteCode) setInviteCode(data.inviteCode);
-      setState('success');
-    } catch {
-      setState('error');
-    }
-  }
-
-  async function copyCode() {
-    const refUrl = inviteCode
-      ? `${window.location.origin}${window.location.pathname}?ref=${inviteCode}`
-      : window.location.href;
-    try {
-      await navigator.clipboard.writeText(refUrl);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // fallback silent fail
-    }
-  }
-
-  if (state === 'success') {
-    const refUrl = inviteCode
-      ? `${window.location.origin}${window.location.pathname}?ref=${inviteCode}`
-      : window.location.href;
-    const tweetText = encodeURIComponent(
-      `Just joined the @cronstream waitlist 🚀\n\nAutonomous on-chain payroll — pay contractors the moment they ship.\n\nGet early access → ${refUrl}`
-    );
-    const tweetUrl = `https://twitter.com/intent/tweet?text=${tweetText}`;
-
-    return (
-      <section className="py-24 px-6 border-t border-border">
-        <div className="max-w-xl mx-auto text-center">
-          {/* Check icon */}
-          <div className="w-14 h-14 rounded-2xl bg-accent/10 border border-accent/30 flex items-center justify-center mx-auto mb-6">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-              <path d="M5 13l4 4L19 7" stroke="#00D4AA" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </div>
-
-          <h2 className="text-2xl font-bold mb-2">You're on the list.</h2>
-          <p className="text-muted text-sm mb-10">
-            Check your inbox — we've sent your invite code and next steps.
-          </p>
-
-          {/* Referral link */}
-          {inviteCode && (
-            <div className="mb-6">
-              <p className="text-xs font-mono text-muted uppercase tracking-widest mb-3">Your referral link</p>
-              <div className="flex items-center gap-2 p-2 pl-4 rounded-xl bg-surface border border-border text-left">
-                <span className="text-sm text-muted flex-1 truncate font-mono">{refUrl}</span>
-                <button
-                  onClick={copyCode}
-                  className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent/10 border border-accent/20 hover:bg-accent/20 transition-all text-accent text-xs font-medium"
-                >
-                  {copied ? (
-                    <>
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
-                        <path d="M5 13l4 4L19 7" stroke="#00D4AA" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-                      </svg>
-                      Copied
-                    </>
-                  ) : (
-                    <>
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
-                        <rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" strokeWidth="1.8"/>
-                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
-                      </svg>
-                      Copy
-                    </>
-                  )}
-                </button>
-              </div>
-              <p className="text-xs text-muted mt-2">Friends who use your link skip the queue.</p>
-            </div>
-          )}
-
-          {/* Share on X */}
-          <a
-            href={tweetUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-surface border border-border hover:border-white/20 hover:bg-white/5 transition-all text-sm font-medium mb-8"
-          >
-            {/* X / Twitter logo */}
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.747l7.73-8.835L1.254 2.25H8.08l4.253 5.622L18.244 2.25zm-1.161 17.52h1.833L7.084 4.126H5.117L17.083 19.77z"/>
-            </svg>
-            Share on X
-          </a>
-
-        </div>
-      </section>
-    );
-  }
-
-  return (
-    <section className="py-24 px-6 border-t border-border">
-      <div className="max-w-xl mx-auto">
-        {/* Header */}
-        <div className="text-center mb-10">
-          <p className="text-xs font-mono text-accent uppercase tracking-widest mb-3">Early access</p>
-          <h2 className="text-3xl sm:text-4xl font-bold mb-3">Join the waitlist</h2>
-          <p className="text-muted text-sm leading-relaxed">
-            CronStream is opening to companies and contractors in waves.
-            Be first to automate your payroll on-chain.
-          </p>
-        </div>
-
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-          {/* Role toggle */}
-          <div className="grid grid-cols-2 gap-2 p-1 bg-surface border border-border rounded-xl">
-            {['company', 'contractor'].map(r => (
-              <button
-                key={r}
-                type="button"
-                onClick={() => setRole(r)}
-                className={`py-2 rounded-lg text-sm font-medium transition-all capitalize
-                  ${role === r ? 'bg-accent/10 text-accent border border-accent/30' : 'text-muted hover:text-white'}`}
-              >
-                {r === 'company' ? 'I pay contractors' : 'I get paid'}
-              </button>
-            ))}
-          </div>
-
-          {/* Company name — only for companies */}
-          {role === 'company' && (
-            <input
-              type="text"
-              value={companyName}
-              onChange={e => setCompanyName(e.target.value)}
-              placeholder="Company name"
-              className="input"
-            />
-          )}
-
-          {/* Email */}
-          <input
-            type="email"
-            value={email}
-            onChange={e => setEmail(e.target.value)}
-            placeholder="Work email"
-            required
-            className="input"
-          />
-
-          {state === 'duplicate' && (
-            <p className="text-accent text-sm text-center">You're already on the list.</p>
-          )}
-          {state === 'error' && (
-            <p className="text-red-400 text-sm text-center">Something went wrong. Try again.</p>
-          )}
-
-          <button
-            type="submit"
-            disabled={state === 'loading' || !email}
-            className="btn-primary py-3 text-base disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {state === 'loading' ? (
-              <span className="flex items-center justify-center gap-2">
-                <span className="w-4 h-4 border-2 border-dark border-t-transparent rounded-full animate-spin" />
-                Joining…
-              </span>
-            ) : 'Request access'}
-          </button>
-
-          <p className="text-center text-xs text-muted">No spam. No credit card. Unsubscribe any time.</p>
-        </form>
-      </div>
-    </section>
-  );
-}
+import { useEffect } from 'react';
 import { useProfile } from '../hooks/useProfile';
 import StreamBackground from '../components/StreamBackground';
 import FlowDiagram from '../components/FlowDiagram';
@@ -213,14 +16,10 @@ const IconStream = () => (
       </linearGradient>
     </defs>
     <rect width="48" height="48" rx="14" fill="url(#sg1)"/>
-    {/* flowing line */}
     <path d="M8 24 Q16 16 24 24 Q32 32 40 24" stroke="#00D4AA" strokeWidth="2.5" strokeLinecap="round" fill="none"/>
-    {/* gate / checkpoint */}
     <rect x="21" y="19" width="6" height="10" rx="3" fill="#00D4AA" opacity="0.9"/>
-    {/* dots on the line */}
     <circle cx="10" cy="24" r="2.5" fill="#00D4AA" opacity="0.5"/>
     <circle cx="38" cy="24" r="2.5" fill="#00D4AA" opacity="0.5"/>
-    {/* lock symbol inside gate */}
     <path d="M23 22.5 v-1.5 a1 1 0 0 1 2 0 v1.5" stroke="#0A0A0F" strokeWidth="1.2" strokeLinecap="round"/>
   </svg>
 );
@@ -234,17 +33,12 @@ const IconAgent = () => (
       </linearGradient>
     </defs>
     <rect width="48" height="48" rx="14" fill="url(#ag1)"/>
-    {/* head */}
     <rect x="14" y="13" width="20" height="16" rx="5" stroke="#818CF8" strokeWidth="2" fill="none"/>
-    {/* eyes */}
     <circle cx="20" cy="21" r="2.5" fill="#818CF8"/>
     <circle cx="28" cy="21" r="2.5" fill="#818CF8"/>
-    {/* antenna */}
     <line x1="24" y1="13" x2="24" y2="9" stroke="#818CF8" strokeWidth="2" strokeLinecap="round"/>
     <circle cx="24" cy="8" r="1.5" fill="#818CF8"/>
-    {/* body / check */}
     <path d="M18 32 h12 M20 36 h8" stroke="#818CF8" strokeWidth="2" strokeLinecap="round" opacity="0.5"/>
-    {/* verify tick */}
     <path d="M18 29 l3 3 l6 -5" stroke="#00D4AA" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
   </svg>
 );
@@ -258,13 +52,9 @@ const IconToken = () => (
       </linearGradient>
     </defs>
     <rect width="48" height="48" rx="14" fill="url(#tg1)"/>
-    {/* back coin */}
     <ellipse cx="27" cy="27" rx="9" ry="9" fill="#F59E0B" opacity="0.25" stroke="#F59E0B" strokeWidth="1.5"/>
-    {/* front coin */}
     <ellipse cx="21" cy="22" rx="9" ry="9" fill="#0A0A0F" stroke="#F59E0B" strokeWidth="2"/>
-    {/* dollar / $ symbol */}
     <text x="21" y="26" textAnchor="middle" fill="#F59E0B" fontSize="10" fontWeight="700" fontFamily="monospace">$</text>
-    {/* sparkle */}
     <path d="M35 13 l1 2 l2 1 l-2 1 l-1 2 l-1-2 l-2-1 l2-1z" fill="#F59E0B" opacity="0.7"/>
   </svg>
 );
@@ -278,20 +68,14 @@ const IconClock = () => (
       </linearGradient>
     </defs>
     <rect width="48" height="48" rx="14" fill="url(#cg1)"/>
-    {/* clock face */}
     <circle cx="24" cy="24" r="13" stroke="#00D4AA" strokeWidth="2" fill="none"/>
-    {/* tick marks */}
     {[0,90,180,270].map(deg => {
       const r = deg * Math.PI / 180;
       return <line key={deg} x1={24 + 10*Math.sin(r)} y1={24 - 10*Math.cos(r)} x2={24 + 12*Math.sin(r)} y2={24 - 12*Math.cos(r)} stroke="#00D4AA" strokeWidth="1.5" strokeLinecap="round" opacity="0.5"/>;
     })}
-    {/* minute hand */}
     <line x1="24" y1="24" x2="24" y2="13" stroke="#00D4AA" strokeWidth="2" strokeLinecap="round"/>
-    {/* hour hand */}
     <line x1="24" y1="24" x2="31" y2="27" stroke="#00D4AA" strokeWidth="2.5" strokeLinecap="round"/>
-    {/* center dot */}
     <circle cx="24" cy="24" r="2" fill="#00D4AA"/>
-    {/* per-second label */}
     <text x="24" y="43" textAnchor="middle" fill="#00D4AA" fontSize="5.5" fontFamily="monospace" opacity="0.7">/sec</text>
   </svg>
 );
@@ -305,9 +89,7 @@ const IconShield = () => (
       </linearGradient>
     </defs>
     <rect width="48" height="48" rx="14" fill="url(#shg1)"/>
-    {/* shield */}
     <path d="M24 10 L36 15 V25 C36 32 24 38 24 38 C24 38 12 32 12 25 V15 Z" stroke="#34D399" strokeWidth="2" fill="none"/>
-    {/* return arrow inside */}
     <path d="M20 24 h6 a3 3 0 0 0 0-6 h-3" stroke="#34D399" strokeWidth="2" strokeLinecap="round" fill="none"/>
     <path d="M19 21 l-2 3 l2 3" stroke="#34D399" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
   </svg>
@@ -322,36 +104,69 @@ const IconKey = () => (
       </linearGradient>
     </defs>
     <rect width="48" height="48" rx="14" fill="url(#kg1)"/>
-    {/* key ring */}
     <circle cx="20" cy="20" r="8" stroke="#A78BFA" strokeWidth="2" fill="none"/>
     <circle cx="20" cy="20" r="3.5" fill="#A78BFA" opacity="0.4"/>
-    {/* key shaft */}
     <line x1="26" y1="26" x2="38" y2="38" stroke="#A78BFA" strokeWidth="2.5" strokeLinecap="round"/>
-    {/* teeth */}
     <line x1="32" y1="32" x2="34" y2="30" stroke="#A78BFA" strokeWidth="2" strokeLinecap="round"/>
     <line x1="35" y1="35" x2="37" y2="33" stroke="#A78BFA" strokeWidth="2" strokeLinecap="round"/>
-    {/* EIP label */}
     <text x="20" y="20.5" textAnchor="middle" dominantBaseline="middle" fill="#A78BFA" fontSize="5" fontFamily="monospace" fontWeight="700">712</text>
   </svg>
 );
 
+// ─── Compliance icons ─────────────────────────────────────────────────────────
+const IconAudit = () => (
+  <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-8 h-8">
+    <rect width="40" height="40" rx="10" fill="#00D4AA" fillOpacity="0.08"/>
+    <path d="M13 10 h9 l6 6 v14 a2 2 0 0 1-2 2 H13 a2 2 0 0 1-2-2 V12 a2 2 0 0 1 2-2z" stroke="#00D4AA" strokeWidth="1.5" fill="none"/>
+    <path d="M22 10 v6 h6" stroke="#00D4AA" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+    <line x1="15" y1="20" x2="25" y2="20" stroke="#00D4AA" strokeWidth="1.5" strokeLinecap="round"/>
+    <line x1="15" y1="24" x2="22" y2="24" stroke="#00D4AA" strokeWidth="1.5" strokeLinecap="round"/>
+    <path d="M16 16 l1.5 1.5 l3-3" stroke="#00D4AA" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+  </svg>
+);
+
+const IconKill = () => (
+  <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-8 h-8">
+    <rect width="40" height="40" rx="10" fill="#F59E0B" fillOpacity="0.08"/>
+    <circle cx="20" cy="20" r="10" stroke="#F59E0B" strokeWidth="1.5" fill="none"/>
+    <line x1="20" y1="10" x2="20" y2="14" stroke="#F59E0B" strokeWidth="2" strokeLinecap="round"/>
+    <line x1="20" y1="16" x2="20" y2="20" stroke="#F59E0B" strokeWidth="2" strokeLinecap="round"/>
+    <path d="M14 26 l6-6 l6 6" stroke="#F59E0B" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+  </svg>
+);
+
+const IconCompliance = () => (
+  <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-8 h-8">
+    <rect width="40" height="40" rx="10" fill="#818CF8" fillOpacity="0.08"/>
+    <path d="M20 8 L30 12.5 V21 C30 27 20 32 20 32 C20 32 10 27 10 21 V12.5 Z" stroke="#818CF8" strokeWidth="1.5" fill="none"/>
+    <path d="M15 20.5 l3.5 3.5 l7-7" stroke="#818CF8" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+  </svg>
+);
+
 const FEATURES = [
-  { Icon: IconStream, title: 'Milestone-Gated Streams',   desc: 'Money flows only while work is being verified. No merged PR, no passing CI. The stream freezes automatically.' },
-  { Icon: IconAgent,  title: 'Autonomous Agent',          desc: 'An off-chain agent verifies work across GitHub, Jira, Bitbucket, and Figma in 3 layers with no human in the loop.' },
-  { Icon: IconToken,  title: 'Any ERC-20 Token',          desc: 'Stream USDC, USDT, or tokenized stocks like TSLA and AAPL. Native support for Robinhood Chain Stock Tokens.' },
-  { Icon: IconClock,  title: 'Per-Second Precision',      desc: 'Contractors earn per second. Balance accrues in real time. Withdraw anytime within the earned window.' },
-  { Icon: IconShield, title: 'Full Budget Recovery',      desc: 'Cancel a stream early and reclaim every unearned token instantly. No disputes, no delays.' },
-  { Icon: IconKey,    title: 'EIP-712 Cryptographic Proof', desc: 'Every stream extension is backed by a signed on-chain voucher. Fully auditable, fully trustless.' },
+  { Icon: IconStream, title: 'Milestone-Gated Streams',      desc: 'Money flows only while work is being verified. No merged PR, no passing CI. The stream freezes automatically.' },
+  { Icon: IconAgent,  title: 'Autonomous Agent',             desc: 'An off-chain agent verifies work across GitHub, Jira, Bitbucket, and Figma in 3 layers with no human in the loop.' },
+  { Icon: IconToken,  title: 'Any ERC-20 Token',             desc: 'Stream USDC, USDT, or tokenized stocks like TSLA and AAPL. Native support for Robinhood Chain Stock Tokens.' },
+  { Icon: IconClock,  title: 'Per-Second Precision',         desc: 'Contractors earn per second. Balance accrues in real time. Withdraw anytime within the earned window.' },
+  { Icon: IconShield, title: 'Full Budget Recovery',         desc: 'Cancel a stream early and reclaim every unearned token instantly. No disputes, no delays.' },
+  { Icon: IconKey,    title: 'EIP-712 Cryptographic Proof',  desc: 'Every stream extension is backed by a signed on-chain voucher. Fully auditable, fully trustless.' },
 ];
 
+const INTEGRATIONS = [
+  { name: 'GitHub',    domain: 'github.com',     color: '#fff' },
+  { name: 'Jira',     domain: 'atlassian.com',   color: '#0052CC' },
+  { name: 'Bitbucket',domain: 'bitbucket.org',   color: '#2684FF' },
+  { name: 'Figma',    domain: 'figma.com',        color: '#A259FF' },
+  { name: 'Arbitrum', domain: 'arbitrum.io',      color: '#12AAFF' },
+  { name: 'Robinhood',domain: 'robinhood.com',    color: '#00C805' },
+];
 
 export default function Landing() {
-  const navigate          = useNavigate();
+  const navigate             = useNavigate();
   const { address, isConnected } = useAccount();
   const { openConnectModal } = useConnectModal();
-  const { hasProfile }    = useProfile(address);
+  const { hasProfile }       = useProfile(address);
 
-  // Once wallet connects, skip /connect and go straight to the right page
   useEffect(() => {
     if (isConnected) {
       navigate(hasProfile ? '/app/dashboard' : '/app/setup', { replace: true });
@@ -367,7 +182,7 @@ export default function Landing() {
   }
 
   return (
-    <div className="min-h-screen bg-dark text-white overflow-x-hidden">
+    <div className="min-h-screen bg-dark text-white overflow-x-hidden" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
 
       {/* Nav */}
       <nav className="fixed top-0 left-0 right-0 z-50 border-b border-border bg-dark/80 backdrop-blur-md">
@@ -388,21 +203,19 @@ export default function Landing() {
 
       {/* Hero */}
       <section className="relative pt-28 sm:pt-32 pb-16 sm:pb-24 px-4 sm:px-6 grid-bg overflow-hidden">
-        {/* Animated stream background */}
         <StreamBackground />
-        {/* Gradient fade — keeps text readable over the animation */}
         <div className="absolute inset-0 bg-gradient-to-b from-dark/60 via-dark/20 to-dark/80 pointer-events-none" />
         <div className="max-w-4xl mx-auto text-center relative">
           <div className="inline-flex items-center gap-2 border border-accent/30 bg-accent/5 text-accent text-xs font-mono px-4 py-1.5 rounded-full mb-8">
             <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
             Live on Arbitrum · Robinhood Chain
           </div>
-          <h1 className="text-4xl sm:text-6xl lg:text-7xl font-bold tracking-tight leading-[1.08] mb-6">
+          <h1 className="text-4xl sm:text-6xl lg:text-7xl font-extrabold tracking-tight leading-[1.06] mb-6" style={{ letterSpacing: '-0.02em' }}>
             Programmable payroll
             <br />
             <span className="text-accent">for business.</span>
           </h1>
-          <p className="text-muted text-lg sm:text-xl max-w-2xl mx-auto mb-4 leading-relaxed">
+          <p className="text-muted text-lg sm:text-xl max-w-2xl mx-auto mb-4 leading-relaxed font-medium">
             CronStream replaces invoice cycles and manual approvals with
             continuous, milestone-verified payment streams. Companies maintain
             full budget control. Contractors get paid as work ships.
@@ -412,14 +225,14 @@ export default function Landing() {
             No middleman. No disputes. No 30-day net terms.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <button className="btn-primary text-base py-3.5 px-8" onClick={handleLaunch}>
+            <button className="btn-primary text-base py-3.5 px-8 font-semibold" onClick={handleLaunch}>
               {isConnected ? 'Go to Dashboard' : 'Start streaming'}
             </button>
             <a
               href="https://github.com/16navigabraham/CronStream"
               target="_blank"
               rel="noopener noreferrer"
-              className="btn-outline text-base py-3.5 px-8"
+              className="btn-outline text-base py-3.5 px-8 font-semibold"
             >
               View on GitHub
             </a>
@@ -460,19 +273,61 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* Integrations strip */}
+      <section className="py-12 px-6 border-b border-border">
+        <div className="max-w-5xl mx-auto">
+          <p className="text-center text-xs font-mono text-muted uppercase tracking-[0.2em] mb-8">
+            Verified against your existing workflow tools
+          </p>
+          <div className="flex flex-wrap items-center justify-center gap-6 sm:gap-10">
+            {INTEGRATIONS.map(({ name, domain }) => (
+              <div key={name} className="flex flex-col items-center gap-2 opacity-60 hover:opacity-100 transition-opacity">
+                <div className="w-10 h-10 rounded-xl border border-border bg-surface flex items-center justify-center">
+                  <img
+                    src={`https://www.google.com/s2/favicons?domain=${domain}&sz=64`}
+                    alt={name}
+                    className="w-6 h-6 object-contain"
+                    onError={e => { e.target.style.display = 'none'; }}
+                  />
+                </div>
+                <span className="text-[11px] font-medium text-muted tracking-wide">{name}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* How it works */}
       <section id="how-it-works" className="py-24 px-6">
         <FlowDiagram />
       </section>
 
+      {/* Protocol trust stats */}
+      <section className="py-16 px-6 border-y border-border bg-surface">
+        <div className="max-w-5xl mx-auto grid grid-cols-2 sm:grid-cols-4 gap-10 text-center">
+          {[
+            { val: '108',   label: 'Smart contract tests', sub: '0 failures' },
+            { val: '99.2%', label: 'Line coverage',        sub: 'Auditable on-chain', accent: true },
+            { val: 'EIP-712', label: 'Signature standard', sub: 'Replay-proof vouchers' },
+            { val: '2',     label: 'Networks live',        sub: 'Arbitrum · Robinhood' },
+          ].map(({ val, label, sub, accent }) => (
+            <div key={label}>
+              <div className={`text-3xl sm:text-4xl font-extrabold mb-1 tracking-tight ${accent ? 'text-accent' : 'text-white'}`}>{val}</div>
+              <div className="text-sm font-semibold text-white/80 mb-0.5">{label}</div>
+              <div className="text-xs text-muted">{sub}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
       {/* Features */}
-      <section id="features" className="py-24 px-6 bg-surface border-y border-border">
+      <section id="features" className="py-24 px-6">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-16">
             <p className="text-xs font-mono text-accent uppercase tracking-[0.2em] mb-4">
               Why CronStream
             </p>
-            <h2 className="text-4xl sm:text-5xl font-bold tracking-tight mb-4">
+            <h2 className="text-4xl sm:text-5xl font-extrabold tracking-tight mb-4" style={{ letterSpacing: '-0.02em' }}>
               Built{' '}
               <span className="relative inline-block">
                 different
@@ -487,39 +342,75 @@ export default function Landing() {
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {FEATURES.map(({ Icon, title, desc }, i) => (
               <div key={title}
-                className="group relative rounded-3xl border border-border bg-dark
+                className="group relative rounded-3xl border border-border bg-surface
                   overflow-hidden hover:border-accent/30 transition-all duration-300
                   hover:shadow-[0_0_40px_-12px_rgba(0,212,170,0.15)]"
               >
-                {/* Top accent bar */}
                 <div className="h-px w-full bg-gradient-to-r from-transparent via-accent/30 to-transparent" />
-
-                {/* Page content */}
                 <div className="px-7 pt-7 pb-8">
-                  {/* Chapter marker row */}
                   <div className="flex items-center justify-between mb-6">
-                    <div className="w-11 h-11">
-                      <Icon />
-                    </div>
+                    <div className="w-11 h-11"><Icon /></div>
                     <span className="text-[10px] font-mono text-muted/40 tracking-widest">
                       {String(i + 1).padStart(2, '0')}
                     </span>
                   </div>
-
-                  {/* Divider line — like a doc rule */}
                   <div className="h-px bg-border mb-5" />
-
                   <h3 className="font-semibold text-white text-base mb-3 leading-snug">{title}</h3>
                   <p className="text-muted text-sm leading-relaxed">{desc}</p>
                 </div>
-
-                {/* Bottom page-fold corner detail */}
                 <div className="absolute bottom-0 right-0 w-8 h-8 overflow-hidden pointer-events-none">
                   <div className="absolute bottom-0 right-0 w-8 h-8
-                    border-t border-l border-border rounded-tl-xl bg-surface
+                    border-t border-l border-border rounded-tl-xl bg-dark
                     group-hover:border-accent/20 transition-colors" />
                 </div>
               </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Compliance callout */}
+      <section className="py-20 px-6 bg-surface border-y border-border">
+        <div className="max-w-5xl mx-auto">
+          <div className="text-center mb-12">
+            <p className="text-xs font-mono text-accent uppercase tracking-[0.2em] mb-3">Regulatory grade</p>
+            <h2 className="text-3xl sm:text-4xl font-extrabold tracking-tight mb-4" style={{ letterSpacing: '-0.02em' }}>
+              Built for the compliance era
+            </h2>
+            <p className="text-muted text-base max-w-md mx-auto leading-relaxed">
+              IRS 1099-DA, MiCA, and AML regulations demand proof of why funds moved.
+              CronStream answers every dollar with a cryptographic event.
+            </p>
+          </div>
+          <div className="grid sm:grid-cols-3 gap-6">
+            {[
+              {
+                Icon: IconAudit,
+                title: 'Event-Driven Audit Trail',
+                desc: 'Every dollar unlocked is tied to a real-world event — a merged PR, a Jira ticket closed, a Figma design approved. Auditors get proof, not promises.',
+              },
+              {
+                Icon: IconKill,
+                title: 'Mathematical Kill Switch',
+                desc: 'No work verified? The agent stops signing. The stream expires at its window boundary and locks. No manual cancel. No gas. No human intervention needed.',
+                highlight: true,
+              },
+              {
+                Icon: IconCompliance,
+                title: 'Zero-Trust by Design',
+                desc: 'Funds stay locked until work is cryptographically verified. Companies are never exposed to non-performance. Contractor payments require proof, not faith.',
+              },
+            ].map(({ Icon, title, desc, highlight }) => (
+              <div key={title} className={`rounded-2xl border p-7 transition-all ${highlight ? 'border-accent/30 bg-accent/5' : 'border-border bg-dark'}`}>
+                <div className="mb-5"><Icon /></div>
+                <h3 className="font-semibold text-white text-base mb-3">{title}</h3>
+                <p className="text-muted text-sm leading-relaxed">{desc}</p>
+              </div>
+            ))}
+          </div>
+          <div className="mt-8 flex flex-wrap justify-center gap-4 text-xs font-mono text-muted/60">
+            {['IRS 1099-DA compliant trail', 'MiCA-ready event logs', 'Cryptographic proof of work', 'Zero unearned payments'].map(tag => (
+              <span key={tag} className="border border-border rounded-full px-3 py-1">{tag}</span>
             ))}
           </div>
         </div>
@@ -529,7 +420,6 @@ export default function Landing() {
       <section className="py-24 px-6">
         <div className="max-w-5xl mx-auto">
           <div className="border border-border rounded-2xl overflow-hidden">
-            {/* Header */}
             <div className="border-b border-border px-8 py-6 flex items-center justify-between gap-4 flex-wrap">
               <div>
                 <div className="text-xs font-mono text-accent uppercase tracking-widest mb-1">Robinhood Chain</div>
@@ -539,10 +429,7 @@ export default function Landing() {
                 Native integration
               </span>
             </div>
-
-            {/* Body */}
             <div className="grid sm:grid-cols-2 gap-0 divide-y sm:divide-y-0 sm:divide-x divide-border">
-              {/* Left — copy */}
               <div className="px-8 py-8">
                 <p className="text-muted leading-relaxed mb-6">
                   On Robinhood Chain, CronStream streams tokenized equities directly to
@@ -554,18 +441,16 @@ export default function Landing() {
                   processing, no 30-day settlement windows.
                 </p>
               </div>
-
-              {/* Right — token grid */}
               <div className="px-8 py-8">
                 <div className="text-xs font-mono text-muted uppercase tracking-widest mb-4">Supported stock tokens</div>
                 <div className="grid grid-cols-3 gap-3">
                   {[
-                    { ticker: 'TSLA', domain: 'tesla.com',    name: 'Tesla'   },
-                    { ticker: 'AMZN', domain: 'amazon.com',   name: 'Amazon'  },
-                    { ticker: 'NFLX', domain: 'netflix.com',  name: 'Netflix' },
-                    { ticker: 'AMD',  domain: 'amd.com',      name: 'AMD'     },
-                    { ticker: 'PLTR', domain: 'palantir.com', name: 'Palantir'},
-                    { ticker: 'AAPL', domain: 'apple.com',    name: 'Apple'   },
+                    { ticker: 'TSLA', domain: 'tesla.com',    name: 'Tesla'    },
+                    { ticker: 'AMZN', domain: 'amazon.com',   name: 'Amazon'   },
+                    { ticker: 'NFLX', domain: 'netflix.com',  name: 'Netflix'  },
+                    { ticker: 'AMD',  domain: 'amd.com',      name: 'AMD'      },
+                    { ticker: 'PLTR', domain: 'palantir.com', name: 'Palantir' },
+                    { ticker: 'AAPL', domain: 'apple.com',    name: 'Apple'    },
                   ].map(({ ticker, domain, name }) => (
                     <div key={ticker}
                       className="border border-border rounded-xl px-3 py-3 flex flex-col items-center gap-2 bg-surface hover:border-accent/30 transition-colors">
@@ -592,16 +477,13 @@ export default function Landing() {
       <section className="relative py-24 px-6 border-t border-border grid-bg overflow-hidden">
         <StreamBackground />
         <div className="max-w-xl mx-auto text-center">
-          <h2 className="text-3xl font-bold mb-4">Ready to stream?</h2>
-          <p className="text-muted mb-8">Programmable payroll for business. Set up in under a minute.</p>
-          <button className="btn-primary text-base py-3.5 px-10" onClick={handleLaunch}>
+          <h2 className="text-3xl font-extrabold mb-4 tracking-tight" style={{ letterSpacing: '-0.02em' }}>Ready to stream?</h2>
+          <p className="text-muted mb-8 font-medium">Programmable payroll for business. Set up in under a minute.</p>
+          <button className="btn-primary text-base py-3.5 px-10 font-semibold" onClick={handleLaunch}>
             {isConnected ? 'Go to Dashboard' : 'Connect Wallet'}
           </button>
         </div>
       </section>
-
-      {/* Waitlist */}
-      <WaitlistSection />
 
       {/* Footer */}
       <footer className="border-t border-border py-8 px-6">

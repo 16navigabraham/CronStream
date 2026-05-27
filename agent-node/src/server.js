@@ -863,6 +863,127 @@ app.get('/api/v1/streams', async (req, res) => {
   }
 });
 
+// ─── GET /api/v1/stream/:streamId/balance ────────────────────────────────────
+// Returns live on-chain withdrawable balance for a stream.
+// Developers use this to poll earnings without calling the contract directly.
+
+app.get('/api/v1/stream/:streamId/balance', async (req, res) => {
+  const { streamId } = req.params;
+  if (!/^0x[a-fA-F0-9]{64}$/.test(streamId)) {
+    return res.status(400).json({ error: 'Invalid streamId format' });
+  }
+  try {
+    const record  = await getStream(streamId);
+    const chainId = Number(record?.chain_id ?? 421614);
+    const [onChain] = await readStreamBatch([streamId], chainId);
+
+    if (!onChain || onChain.sender === '0x0000000000000000000000000000000000000000') {
+      return res.status(404).json({ error: 'Stream not found on-chain' });
+    }
+
+    const now      = Math.floor(Date.now() / 1000);
+    const isActive = now < Number(onChain.streamValidUntil);
+
+    return res.json({
+      streamId, chainId,
+      balance:          onChain.balance,
+      ratePerSecond:    onChain.ratePerSecond,
+      streamValidUntil: onChain.streamValidUntil,
+      totalDeposited:   onChain.totalDeposited,
+      totalWithdrawn:   onChain.totalWithdrawn,
+      earnedSnapshot:   onChain.earnedSnapshot,
+      isActive,
+    });
+  } catch (err) {
+    console.error('[stream/balance] Error:', err);
+    return res.status(500).json({ error: 'Failed to read balance' });
+  }
+});
+
+// ─── DELETE /api/v1/stream/:streamId ────────────────────────────────────────
+// Removes a stream from the agent's monitoring registry.
+// Does NOT touch the on-chain contract — only removes the DB entry.
+// Only the company (sender) can deactivate their own stream.
+
+app.delete('/api/v1/stream/:streamId', verifyApiKey, async (req, res) => {
+  const { streamId } = req.params;
+  if (!/^0x[a-fA-F0-9]{64}$/.test(streamId)) {
+    return res.status(400).json({ error: 'Invalid streamId format' });
+  }
+  try {
+    const record = await getStream(streamId);
+    if (!record) return res.status(404).json({ error: 'Stream not found in registry' });
+
+    if (record.sender && req.callerAddress &&
+        record.sender.toLowerCase() !== req.callerAddress.toLowerCase()) {
+      return res.status(403).json({ error: 'Only the stream sender can deactivate it' });
+    }
+
+    const db = getDb();
+    await db.execute({ sql: 'DELETE FROM stream_registry WHERE stream_id = ?', args: [streamId] });
+
+    return res.json({ success: true, streamId, message: 'Stream removed from agent registry' });
+  } catch (err) {
+    console.error('[stream/delete] Error:', err);
+    return res.status(500).json({ error: 'Failed to deactivate stream' });
+  }
+});
+
+// ─── GET /api/v1/streams/pending ─────────────────────────────────────────────
+// Returns streams that are expired on-chain (need agent extension or reclaim).
+// Useful for company dashboards polling for streams requiring attention.
+
+app.get('/api/v1/streams/pending', verifyApiKey, async (req, res) => {
+  const { address } = req.query;
+  if (!address || !/^0x[a-fA-F0-9]{40}$/i.test(address)) {
+    return res.status(400).json({ error: 'address query param required' });
+  }
+  try {
+    const dbStreams = await getStreamsForAddress(address);
+    if (!dbStreams.length) return res.json({ address, pending: [] });
+
+    const byChain = {};
+    for (const s of dbStreams) {
+      const cid = s.chain_id ?? 421614;
+      (byChain[cid] ??= []).push(s);
+    }
+
+    const pending = [];
+    const now     = Math.floor(Date.now() / 1000);
+
+    for (const [chainId, group] of Object.entries(byChain)) {
+      const onChain = await readStreamBatch(group.map(s => s.stream_id), Number(chainId));
+      for (let i = 0; i < group.length; i++) {
+        const oc = onChain[i];
+        if (!oc) continue;
+        const isExpired = now >= Number(oc.streamValidUntil);
+        const hasBalance = BigInt(oc.balance ?? 0) > 0n;
+        const hasUnearned = BigInt(oc.totalDeposited ?? 0) > BigInt(oc.totalWithdrawn ?? 0) + BigInt(oc.balance ?? 0);
+
+        if (isExpired) {
+          pending.push({
+            streamId:         group[i].stream_id,
+            chainId:          Number(chainId),
+            recipient:        oc.recipient,
+            streamValidUntil: oc.streamValidUntil,
+            balance:          oc.balance,
+            totalDeposited:   oc.totalDeposited,
+            reclaimable:      hasUnearned,
+            contractorOwed:   hasBalance,
+            verificationSource: group[i].verification_source,
+            verificationTarget: group[i].verification_target,
+          });
+        }
+      }
+    }
+
+    return res.json({ address, count: pending.length, pending });
+  } catch (err) {
+    console.error('[streams/pending] Error:', err);
+    return res.status(500).json({ error: 'Failed to fetch pending streams' });
+  }
+});
+
 // ─── Waitlist email helper ────────────────────────────────────────────────────
 
 function generateInviteCode(email) {

@@ -129,7 +129,7 @@ function ContractorPicker({ selected, onSelect }) {
           className="input pr-10"
         />
         {searching && (
-          <div className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+          <div className="absolute right-3 inset-y-0 my-auto w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin" />
         )}
 
         {/* Floating results list */}

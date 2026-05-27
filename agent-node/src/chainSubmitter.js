@@ -18,7 +18,7 @@ const ROUTER_ABI = [
 
 // Read-only ABI for stream data queries
 const STREAM_READ_ABI = [
-  'function streams(bytes32) external view returns (address sender, address recipient, address token, uint256 ratePerSecond, uint256 startTime, uint256 streamValidUntil, uint256 totalDeposited, uint256 totalWithdrawn, uint256 nonce)',
+  'function streams(bytes32) external view returns (address sender, address recipient, address token, uint256 ratePerSecond, uint256 startTime, uint256 streamValidUntil, uint256 totalDeposited, uint256 totalWithdrawn, uint256 nonce, uint256 earnedSnapshot, uint256 lastWindowStart)',
   'function balanceOf(bytes32 streamId) external view returns (uint256)',
 ];
 
@@ -209,6 +209,8 @@ export async function readStreamBatch(streamIds, chainId = 421614) {
         totalDeposited:   meta.totalDeposited.toString(),
         totalWithdrawn:   meta.totalWithdrawn.toString(),
         nonce:            meta.nonce.toString(),
+        earnedSnapshot:   meta.earnedSnapshot.toString(),
+        lastWindowStart:  meta.lastWindowStart.toString(),
         balance:          bal.toString(),
       };
     } catch (err) {

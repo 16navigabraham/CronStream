@@ -200,7 +200,7 @@ export default function StreamHistory() {
             <p className="text-[10px] text-muted font-mono">all time</p>
           </div>
           <div className="stat-card">
-            <p className="stat-label">Total deployed</p>
+            <p className="stat-label">Total streams</p>
             <div className="text-xl font-mono font-bold tabular-nums">
               {fmtCurrency(parseFloat(formatUnits(allDeposited, decimals)))}
             </div>

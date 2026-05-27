@@ -311,7 +311,7 @@ export default function CompanyHistory() {
           <div className="stat-value tabular-nums">
             {symbol ? fmtCurrency(parseFloat(formatUnits(totalDeposited, decimals))) : '—'}
           </div>
-          <div className="stat-label">Total deployed</div>
+          <div className="stat-label">Total Streams</div>
           <p className="text-[10px] text-muted font-mono mt-0.5">all streams</p>
         </div>
         <div className="stat-card">

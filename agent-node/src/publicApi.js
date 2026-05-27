@@ -27,7 +27,8 @@ import { paymentMiddleware }            from 'x402-express';
 import { verifyMilestone }              from './verifyMilestone.js';
 import { signExtensionVoucher,
          getSignerAddress }             from './agentSigner.js';
-import { getStream }                    from './db.js';
+import { getStream, getStreamsForAddress } from './db.js';
+import { readStreamBatch }              from './chainSubmitter.js';
 
 const router = Router();
 
@@ -54,17 +55,30 @@ router.use(
         'POST /api/public/verify-milestone': {
           price:   '$0.10',
           network: NETWORK,
-          config:  {
-            description: 'Verify a work milestone and get a signed stream-extension voucher',
-          },
+          config:  { description: 'Verify a work milestone and get a signed stream-extension voucher' },
         },
         'GET /api/public/stream/*': {
           price:   '$0.01',
           network: NETWORK,
           config:  { description: 'Read a stream entry from the CronStream registry' },
         },
+        'GET /api/public/balance/*': {
+          price:   '$0.01',
+          network: NETWORK,
+          config:  { description: 'Read live on-chain withdrawable balance for a stream' },
+        },
+        'GET /api/public/streams/company/*': {
+          price:   '$0.05',
+          network: NETWORK,
+          config:  { description: 'List all streams a company has opened' },
+        },
+        'GET /api/public/streams/contractor/*': {
+          price:   '$0.05',
+          network: NETWORK,
+          config:  { description: 'List all streams a contractor is receiving' },
+        },
       })
-    : (_req, _res, next) => next(), // no-op in dev when private key not set
+    : (_req, _res, next) => next(),
 );
 
 // ─── GET /api/public/info ─────────────────────────────────────────────────────
@@ -73,18 +87,21 @@ router.use(
 router.get('/info', (_req, res) => {
   res.json({
     name:        'CronStream Public API',
-    version:     '1.0.0',
+    version:     '2.0.0',
     protocol:    'x402',
     network:     NETWORK,
     payTo:       PAY_TO ?? 'not configured',
     pricing: {
-      'POST /api/public/verify-milestone':  '$0.10 USDC per call',
-      'GET  /api/public/stream/:id':        '$0.01 USDC per call',
+      'POST /api/public/verify-milestone':         '$0.10 USDC per call',
+      'GET  /api/public/stream/:id':               '$0.01 USDC per call',
+      'GET  /api/public/balance/:id':              '$0.01 USDC per call',
+      'GET  /api/public/streams/company/:address': '$0.05 USDC per call',
+      'GET  /api/public/streams/contractor/:address': '$0.05 USDC per call',
     },
     usage:
       'Include a valid X-PAYMENT header with each paid request. ' +
       'Hit any paid endpoint without one to receive a 402 with full payment instructions. ' +
-      'Streams are registered automatically when created on-chain — no manual registration needed.',
+      'Streams are registered automatically when created on-chain.',
     spec: 'https://x402.org',
   });
 });
@@ -106,7 +123,7 @@ router.get('/info', (_req, res) => {
 
 router.post('/verify-milestone', async (req, res) => {
   const {
-    streamId, contractorAddress, nonce,
+    streamId, contractorAddress,
     verificationSource, verificationTarget, githubPayload,
   } = req.body;
 
@@ -116,19 +133,22 @@ router.post('/verify-milestone', async (req, res) => {
   if (!contractorAddress || !/^0x[a-fA-F0-9]{40}$/.test(contractorAddress)) {
     return res.status(400).json({ error: 'Invalid contractorAddress' });
   }
-  if (typeof nonce !== 'number' || nonce < 0) {
-    return res.status(400).json({ error: 'nonce must be a non-negative integer' });
-  }
 
   try {
-    // Fall back to registry values if caller doesn't supply source/target
     const streamRecord = await getStream(streamId);
+    const chainId = Number(streamRecord?.chain_id ?? 421614);
+
+    // Always read nonce from chain — never trust the caller to supply it.
+    // A stale nonce would produce a voucher that reverts on-chain.
+    const [onChain] = await readStreamBatch([streamId], chainId);
+    if (!onChain || onChain.sender === '0x0000000000000000000000000000000000000000') {
+      return res.status(404).json({ error: 'Stream not found on-chain' });
+    }
+    const nonce = Number(onChain.nonce);
+
     const source = verificationSource ?? streamRecord?.verification_source ?? 'github';
     const target = verificationTarget ?? streamRecord?.verification_target;
 
-    // Public callers verify against public repos/boards only.
-    // Stored integration credentials (Jira token, Figma token, etc.) are not
-    // accessible here — those are private to the stream owner's agent session.
     const verifyResult = await verifyMilestone({
       streamId, contractorAddress, nonce,
       verificationSource: source,
@@ -143,8 +163,8 @@ router.post('/verify-milestone', async (req, res) => {
       });
     }
 
-    const voucher = await signExtensionVoucher({ streamId, nonce });
-    return res.json({ success: true, voucher });
+    const voucher = await signExtensionVoucher({ streamId, nonce, chainId });
+    return res.json({ success: true, voucher, nonce });
   } catch (err) {
     console.error('[publicApi:verify-milestone]', err);
     return res.status(500).json({ error: 'Verification error', detail: err.message });
@@ -152,8 +172,7 @@ router.post('/verify-milestone', async (req, res) => {
 });
 
 // ─── GET /api/public/stream/:id ───────────────────────────────────────────────
-// Read a stream's public registry entry. Returns chain, sender, recipient,
-// token, and verification config. Never returns integration credentials.
+// Registry entry + live on-chain state. Never returns integration credentials.
 
 router.get('/stream/:id', async (req, res) => {
   const { id } = req.params;
@@ -161,27 +180,176 @@ router.get('/stream/:id', async (req, res) => {
     return res.status(400).json({ error: 'Invalid stream ID' });
   }
   try {
-    const stream = await getStream(id);
+    const [stream, onChain] = await Promise.all([
+      getStream(id),
+      (async () => {
+        const rec = await getStream(id);
+        const chainId = Number(rec?.chain_id ?? 421614);
+        const [r] = await readStreamBatch([id], chainId);
+        return r;
+      })(),
+    ]);
     if (!stream) return res.status(404).json({ error: 'Stream not found' });
 
-    const {
-      stream_id, chain_id, verification_source, verification_target,
-      sender, recipient, token, created_at,
-    } = stream;
+    const { stream_id, chain_id, verification_source, verification_target,
+            sender, recipient, token, created_at } = stream;
 
     return res.json({
       streamId:           stream_id,
       chainId:            chain_id,
       verificationSource: verification_source,
       verificationTarget: verification_target,
-      sender,
-      recipient,
-      token,
+      sender:             onChain?.sender    ?? sender,
+      recipient:          onChain?.recipient ?? recipient,
+      token:              onChain?.token     ?? token,
+      ratePerSecond:      onChain?.ratePerSecond    ?? null,
+      streamValidUntil:   onChain?.streamValidUntil ?? null,
+      totalDeposited:     onChain?.totalDeposited   ?? null,
+      totalWithdrawn:     onChain?.totalWithdrawn   ?? null,
+      nonce:              onChain?.nonce            ?? null,
+      balance:            onChain?.balance          ?? null,
       createdAt:          created_at,
     });
   } catch (err) {
     console.error('[publicApi:stream]', err);
     return res.status(500).json({ error: 'Failed to fetch stream' });
+  }
+});
+
+// ─── GET /api/public/balance/:id ─────────────────────────────────────────────
+// Live withdrawable balance for a stream. AI agents use this to check how much
+// a contractor can claim right now before deciding to trigger a payment action.
+
+router.get('/balance/:id', async (req, res) => {
+  const { id } = req.params;
+  if (!/^0x[a-fA-F0-9]{64}$/.test(id)) {
+    return res.status(400).json({ error: 'Invalid stream ID' });
+  }
+  try {
+    const record  = await getStream(id);
+    const chainId = Number(record?.chain_id ?? 421614);
+    const [onChain] = await readStreamBatch([id], chainId);
+
+    if (!onChain || onChain.sender === '0x0000000000000000000000000000000000000000') {
+      return res.status(404).json({ error: 'Stream not found on-chain' });
+    }
+
+    const now      = Math.floor(Date.now() / 1000);
+    const isActive = now < Number(onChain.streamValidUntil);
+
+    return res.json({
+      streamId: id,
+      chainId,
+      balance:          onChain.balance,
+      ratePerSecond:    onChain.ratePerSecond,
+      streamValidUntil: onChain.streamValidUntil,
+      totalDeposited:   onChain.totalDeposited,
+      totalWithdrawn:   onChain.totalWithdrawn,
+      isActive,
+    });
+  } catch (err) {
+    console.error('[publicApi:balance]', err);
+    return res.status(500).json({ error: 'Failed to read balance' });
+  }
+});
+
+// ─── GET /api/public/streams/company/:address ────────────────────────────────
+// All streams a company has opened, enriched with live on-chain state.
+// Useful for treasury AI agents auditing payroll obligations.
+
+router.get('/streams/company/:address', async (req, res) => {
+  const { address } = req.params;
+  if (!/^0x[a-fA-F0-9]{40}$/i.test(address)) {
+    return res.status(400).json({ error: 'Invalid wallet address' });
+  }
+  try {
+    const dbStreams = await getStreamsForAddress(address);
+    const sent      = dbStreams.filter(s => s.sender?.toLowerCase() === address.toLowerCase());
+
+    const byChain = {};
+    for (const s of sent) {
+      const cid = s.chain_id ?? 421614;
+      (byChain[cid] ??= []).push(s);
+    }
+
+    const enriched = [];
+    for (const [chainId, group] of Object.entries(byChain)) {
+      const onChain = await readStreamBatch(group.map(s => s.stream_id), Number(chainId));
+      for (let i = 0; i < group.length; i++) {
+        const oc  = onChain[i] ?? {};
+        const now = Math.floor(Date.now() / 1000);
+        enriched.push({
+          streamId:         group[i].stream_id,
+          chainId:          Number(chainId),
+          recipient:        oc.recipient        ?? group[i].recipient,
+          token:            oc.token            ?? group[i].token,
+          ratePerSecond:    oc.ratePerSecond    ?? null,
+          streamValidUntil: oc.streamValidUntil ?? null,
+          totalDeposited:   oc.totalDeposited   ?? null,
+          totalWithdrawn:   oc.totalWithdrawn   ?? null,
+          balance:          oc.balance          ?? null,
+          isActive:         oc.streamValidUntil ? now < Number(oc.streamValidUntil) : false,
+          verificationSource: group[i].verification_source,
+          verificationTarget: group[i].verification_target,
+        });
+      }
+    }
+
+    return res.json({ address, count: enriched.length, streams: enriched });
+  } catch (err) {
+    console.error('[publicApi:streams/company]', err);
+    return res.status(500).json({ error: 'Failed to fetch streams' });
+  }
+});
+
+// ─── GET /api/public/streams/contractor/:address ─────────────────────────────
+// All streams a contractor is receiving, with live balance and earning rate.
+// Useful for AI agents checking earnings before advising on withdrawal timing.
+
+router.get('/streams/contractor/:address', async (req, res) => {
+  const { address } = req.params;
+  if (!/^0x[a-fA-F0-9]{40}$/i.test(address)) {
+    return res.status(400).json({ error: 'Invalid wallet address' });
+  }
+  try {
+    const dbStreams   = await getStreamsForAddress(address);
+    const received    = dbStreams.filter(s => s.recipient?.toLowerCase() === address.toLowerCase());
+
+    const byChain = {};
+    for (const s of received) {
+      const cid = s.chain_id ?? 421614;
+      (byChain[cid] ??= []).push(s);
+    }
+
+    const enriched = [];
+    for (const [chainId, group] of Object.entries(byChain)) {
+      const onChain = await readStreamBatch(group.map(s => s.stream_id), Number(chainId));
+      for (let i = 0; i < group.length; i++) {
+        const oc  = onChain[i] ?? {};
+        const now = Math.floor(Date.now() / 1000);
+        enriched.push({
+          streamId:         group[i].stream_id,
+          chainId:          Number(chainId),
+          sender:           oc.sender           ?? group[i].sender,
+          token:            oc.token            ?? group[i].token,
+          ratePerSecond:    oc.ratePerSecond    ?? null,
+          streamValidUntil: oc.streamValidUntil ?? null,
+          totalDeposited:   oc.totalDeposited   ?? null,
+          totalWithdrawn:   oc.totalWithdrawn   ?? null,
+          balance:          oc.balance          ?? null,
+          isActive:         oc.streamValidUntil ? now < Number(oc.streamValidUntil) : false,
+          verificationSource: group[i].verification_source,
+          verificationTarget: group[i].verification_target,
+        });
+      }
+    }
+
+    const totalClaimable = enriched.reduce((acc, s) => acc + BigInt(s.balance ?? 0), 0n).toString();
+
+    return res.json({ address, count: enriched.length, totalClaimable, streams: enriched });
+  } catch (err) {
+    console.error('[publicApi:streams/contractor]', err);
+    return res.status(500).json({ error: 'Failed to fetch streams' });
   }
 });
 
