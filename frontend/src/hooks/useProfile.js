@@ -184,9 +184,13 @@ export function useProfile(address) {
         localStorage.setItem(CACHE_KEY(address), JSON.stringify(enriched));
         _memCache.set(address.toLowerCase(), { profile: serverProfile, ts: Date.now() });
         notifyListeners(address, enriched);
+        return { ok: true };
+      } else {
+        const body = await res.json().catch(() => ({}));
+        return { ok: false, error: body.error ?? 'Failed to save profile', status: res.status };
       }
     } catch (err) {
-      console.warn('[useProfile] Save to server failed (cache preserved):', err.message);
+      return { ok: false, error: err.message ?? 'Network error' };
     }
   }, [address]);
 

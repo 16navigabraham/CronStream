@@ -639,8 +639,11 @@ app.post('/api/v1/profile', verifyJwt, async (req, res) => {
     const existing  = await getProfile(address);
     const finalRole = existing ? existing.role : role;
 
-    // Validate username uniqueness if provided
+    // Username is required for new profiles; optional (but validated) for updates
     const { username } = req.body;
+    if (!existing && !username) {
+      return res.status(400).json({ error: 'Username is required when creating a profile' });
+    }
     if (username) {
       if (!/^[a-z0-9_-]{3,30}$/.test(username)) {
         return res.status(400).json({ error: 'Username: 3–30 chars, lowercase letters/numbers/_/- only' });

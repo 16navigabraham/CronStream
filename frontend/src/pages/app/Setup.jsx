@@ -65,6 +65,7 @@ export default function Setup() {
 
   const [role,    setRole]    = useState(null);
   const [loading, setLoading] = useState(false);
+  const [error,   setError]   = useState(null);
   const [form, setForm] = useState({
     username: '', name: '', github: '', website: '',
   });
@@ -84,7 +85,13 @@ export default function Setup() {
     e.preventDefault();
     if (!role || !form.name || !form.username) return;
     setLoading(true);
-    await saveProfile({ role, ...form });
+    setError(null);
+    const result = await saveProfile({ role, ...form });
+    setLoading(false);
+    if (!result?.ok) {
+      setError(result?.error ?? 'Something went wrong. Please try again.');
+      return;
+    }
     navigate('/app/dashboard', { replace: true });
   }
 
@@ -179,6 +186,12 @@ export default function Setup() {
                   placeholder="https://acme.com"
                   className="input"
                 />
+              </div>
+            )}
+
+            {error && (
+              <div className="text-xs text-red-400 font-mono bg-red-500/5 border border-red-500/20 rounded-xl px-4 py-2.5">
+                {error}
               </div>
             )}
 
