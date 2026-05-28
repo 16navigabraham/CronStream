@@ -17,7 +17,7 @@ import rateLimit from 'express-rate-limit';
 import { verifyMilestone, VerificationError } from './verifyMilestone.js';
 import { signExtensionVoucher, getSignerAddress } from './agentSigner.js';
 import { submitExtension, getAllBalances, readStreamBatch }   from './chainSubmitter.js';
-import { initDb, isAlreadyProcessed, recordExtension, getExtensionCount, registerStream, getStream, getStreamsForAddress, getDb, upsertProfile, getProfile, getProfileByUsername, getProfileByApiKey, searchProfiles, isUsernameTaken, addToWaitlist, getWaitlistCount } from './db.js';
+import { initDb, isAlreadyProcessed, recordExtension, getExtensionCount, registerStream, getStream, getStreamsByRepo, getStreamsForAddress, getDb, upsertProfile, getProfile, getProfileByUsername, getProfileByApiKey, searchProfiles, isUsernameTaken, addToWaitlist, getWaitlistCount } from './db.js';
 import { publicProfile } from './encryption.js';
 import publicApiRouter        from './publicApi.js';
 import { startStreamListeners } from './streamListener.js';
@@ -95,7 +95,7 @@ app.use((req, _res, next) => {
 // ─── Body Parsing ─────────────────────────────────────────────────────────────
 // Webhook path gets express.raw() first so the handler receives the exact bytes
 // for HMAC verification. Must be before express.json() so the stream isn't consumed.
-app.use('/api/v1/webhook/github', express.raw({ type: 'application/json', limit: '5mb' }));
+app.use('/api/v1/webhook/github', express.raw({ type: '*/*', limit: '5mb' }));
 // All other routes get standard JSON parsing.
 app.use(express.json({ limit: '5mb' }));
 
@@ -420,159 +420,167 @@ app.post('/api/v1/webhook/github', sensitiveLimit, async (req, res) => {
 
   console.log(`[webhook] Received event: ${event} | action: ${payload.action}`);
 
-  // ── Only act on merged PRs ────────────────────────────────────────────────
-  if (event !== 'pull_request') {
+  // ── Normalise: merged PR or direct push to default branch ────────────────
+  // Contractors who own the repo may push directly to main without opening a PR.
+  // Both paths extract CronStream metadata and run the same verification flow.
+  let pr   = null;
+  let repo = payload.repository?.full_name ?? 'unknown';
+  let metaBody = '';
+
+  if (event === 'pull_request') {
+    if (payload.action !== 'closed' || payload.pull_request?.merged !== true) {
+      return res.json({ received: true, event, status: 'ignored', action: payload.action });
+    }
+    pr       = payload.pull_request;
+    metaBody = pr.body ?? '';
+    console.log(`[webhook] PR #${pr.number} merged into ${repo} — starting autonomous extension flow`);
+  } else if (event === 'push') {
+    // Only act on pushes to the default branch (refs/heads/main, refs/heads/master, etc.)
+    const ref        = payload.ref ?? '';
+    const defaultRef = `refs/heads/${payload.repository?.default_branch ?? 'main'}`;
+    if (ref !== defaultRef) {
+      return res.json({ received: true, event, status: 'ignored', reason: 'not default branch' });
+    }
+    // Use the latest commit message as the metadata source
+    const headCommit = payload.head_commit ?? payload.commits?.[0];
+    metaBody = headCommit?.message ?? '';
+    console.log(`[webhook] Push to ${ref} on ${repo} — starting autonomous extension flow`);
+  } else {
     return res.json({ received: true, event, status: 'ignored' });
   }
 
-  if (payload.action !== 'closed' || payload.pull_request?.merged !== true) {
-    return res.json({ received: true, event, status: 'ignored', action: payload.action });
-  }
-
-  const pr   = payload.pull_request;
-  const repo = payload.repository?.full_name ?? 'unknown';
-
-  console.log(`[webhook] PR #${pr.number} merged into ${repo} — starting autonomous extension flow`);
-
-  // ── Parse CronStream metadata from PR body ────────────────────────────────
-  // Company must include in the PR description:
+  // ── Parse CronStream metadata ─────────────────────────────────────────────
+  // Add these lines to the PR description OR commit message:
   //   CronStream-Stream-Id: 0x<64hex>
   //   CronStream-Nonce: <integer>
-  const prBody = pr.body ?? '';
+  const streamIdMatch = metaBody.match(/CronStream-Stream-Id:\s*(0x[a-fA-F0-9]{64})/);
+  const nonceMatch    = metaBody.match(/CronStream-Nonce:\s*(\d+)/);
 
-  const streamIdMatch = prBody.match(/CronStream-Stream-Id:\s*(0x[a-fA-F0-9]{64})/);
-  const nonceMatch    = prBody.match(/CronStream-Nonce:\s*(\d+)/);
+  // eventRef — PR#N for pull_request events, commit SHA for push events
+  const prNumber = pr?.number ?? null;
+  const commitSha = event === 'push' ? (payload.head_commit?.id ?? payload.after) : null;
+  const eventRef  = prNumber != null ? `PR#${prNumber}` : (commitSha ?? 'unknown');
 
-  if (!streamIdMatch || !nonceMatch) {
-    console.log(
-      `[webhook] PR #${pr.number} has no CronStream metadata — skipping autonomous flow.\n` +
-      '  Add "CronStream-Stream-Id: 0x..." and "CronStream-Nonce: N" to the PR description.',
-    );
-    return res.json({
-      received: true,
-      event,
-      status:   'skipped',
-      reason:   'No CronStream-Stream-Id / CronStream-Nonce in PR description',
-    });
-  }
+  // ── Resolve stream: metadata in body takes precedence; otherwise auto-lookup by repo ──
+  let streamsToProcess = [];
 
-  const streamId = streamIdMatch[1];
-  const nonce    = parseInt(nonceMatch[1], 10);
-
-  // ── Replay guard ──────────────────────────────────────────────────────────
-  if (await isAlreadyProcessed(streamId, repo, pr.number)) {
-    console.log(`[webhook] Already processed stream=${streamId} PR#${pr.number} — skipping`);
-    return res.json({ received: true, event, status: 'already_processed' });
-  }
-
-  // ── Load stream metadata + company credentials ────────────────────────────
-  let verificationSource = 'github';
-  let verificationTarget = null;
-  let companyCredentials = null;
-
-  try {
-    const stream = await getStream(streamId);
-    if (stream) {
-      verificationSource = stream.verification_source ?? 'github';
-      verificationTarget = stream.verification_target ?? stream.github_repo ?? null;
-      // Load company's integration credentials from their profile
-      if (stream.sender && verificationSource !== 'github') {
-        companyCredentials = await getProfile(stream.sender);
+  if (streamIdMatch && nonceMatch) {
+    // Explicit metadata — single stream, caller-supplied nonce
+    streamsToProcess = [{ streamId: streamIdMatch[1], nonce: parseInt(nonceMatch[1], 10) }];
+  } else {
+    // Auto-lookup: find all streams registered for this repo and read nonce from chain
+    console.log(`[webhook] No CronStream metadata in message — auto-looking up streams for ${repo}`);
+    const registered = await getStreamsByRepo(repo);
+    if (!registered.length) {
+      console.log(`[webhook] No streams registered for ${repo} — skipping`);
+      return res.json({ received: true, event, status: 'skipped', reason: 'No streams registered for this repo' });
+    }
+    const chainId   = registered[0].chain_id;
+    const onChain   = await readStreamBatch(registered.map(s => s.stream_id), chainId);
+    for (let i = 0; i < registered.length; i++) {
+      if (onChain[i]) {
+        streamsToProcess.push({ streamId: registered[i].stream_id, nonce: Number(onChain[i].nonce) });
       }
     }
-  } catch { /* DB unavailable — fall through with github defaults */ }
-
-  // ── Build githubPayload for github-source streams ─────────────────────────
-  // workflow_run conclusion is not available in pull_request events — a merged PR
-  // is treated as CI-passed. The verifier still checks qualifying files / PR metadata.
-  // We do NOT trust any caller-supplied headers for CI status.
-  const githubPayload = verificationSource === 'github' ? {
-    repository:   payload.repository,
-    pull_request: pr,
-    workflow_run: { conclusion: 'success' }, // merged PR implies CI passed
-  } : null;
-
-  // ── Verification ──────────────────────────────────────────────────────────
-  let verificationResult;
-  try {
-    verificationResult = await verifyMilestone({
-      streamId,
-      contractorAddress: pr.user?.login ?? 'unknown',
-      verificationSource,
-      verificationTarget,
-      githubPayload,
-      companyCredentials,
-    });
-  } catch (err) {
-    if (err instanceof VerificationError) {
-      console.warn(`[webhook] Verification failed (layer ${err.layer}): ${err.message}`);
-      return res.status(422).json({ received: true, success: false, error: err.message, failedLayer: err.layer });
+    if (!streamsToProcess.length) {
+      return res.json({ received: true, event, status: 'skipped', reason: 'Could not read on-chain nonce for any registered stream' });
     }
-    console.error('[webhook] Unexpected verification error:', err);
-    return res.status(500).json({ received: true, success: false, error: 'Internal verification error' });
   }
 
-  // ── Sign the extension voucher ────────────────────────────────────────────
-  const extensionDurationSeconds = getExtensionDuration();
-  const expiry                   = getVoucherExpiry();
+  // ── Process each stream ───────────────────────────────────────────────────
+  const results = [];
+  for (const { streamId, nonce } of streamsToProcess) {
+    if (await isAlreadyProcessed(streamId, repo, eventRef)) {
+      console.log(`[webhook] Already processed stream=${streamId} ref=${eventRef} — skipping`);
+      results.push({ streamId, status: 'already_processed' });
+      continue;
+    }
 
-  let signature;
-  try {
-    signature = await signExtensionVoucher({ streamId, extensionDurationSeconds, nonce, expiry });
-  } catch (err) {
-    console.error('[webhook] Signing error:', err);
-    return res.status(500).json({ received: true, success: false, error: 'Failed to sign voucher' });
-  }
+    // ── Load stream metadata + company credentials ──────────────────────────
+    let verificationSource = 'github';
+    let verificationTarget = null;
+    let companyCredentials = null;
 
-  // ── Submit on-chain ───────────────────────────────────────────────────────
-  let onChainResult;
-  try {
-    onChainResult = await submitExtension({
+    try {
+      const stream = await getStream(streamId);
+      if (stream) {
+        verificationSource = stream.verification_source ?? 'github';
+        verificationTarget = stream.verification_target ?? stream.github_repo ?? null;
+        if (stream.sender && verificationSource !== 'github') {
+          companyCredentials = await getProfile(stream.sender);
+        }
+      }
+    } catch { /* DB unavailable — fall through with github defaults */ }
+
+    const githubPayload = verificationSource === 'github' ? {
+      repository:   payload.repository,
+      pull_request: pr ?? { merged: true, user: { login: payload.pusher?.name ?? 'unknown' }, body: metaBody },
+      workflow_run: { conclusion: 'success' },
+    } : null;
+
+    // ── Verification ────────────────────────────────────────────────────────
+    let verificationResult;
+    try {
+      verificationResult = await verifyMilestone({
+        streamId,
+        contractorAddress: pr?.user?.login ?? payload.pusher?.name ?? 'unknown',
+        verificationSource,
+        verificationTarget,
+        githubPayload,
+        companyCredentials,
+      });
+    } catch (err) {
+      if (err instanceof VerificationError) {
+        console.warn(`[webhook] stream=${streamId} verification failed (layer ${err.layer}): ${err.message}`);
+        results.push({ streamId, status: 'verification_failed', error: err.message });
+        continue;
+      }
+      console.error('[webhook] Unexpected verification error:', err);
+      results.push({ streamId, status: 'error', error: 'Internal verification error' });
+      continue;
+    }
+
+    // ── Sign ────────────────────────────────────────────────────────────────
+    const extensionDurationSeconds = getExtensionDuration();
+    const expiry                   = getVoucherExpiry();
+    let signature;
+    try {
+      signature = await signExtensionVoucher({ streamId, extensionDurationSeconds, nonce, expiry });
+    } catch (err) {
+      console.error('[webhook] Signing error:', err);
+      results.push({ streamId, status: 'error', error: 'Failed to sign voucher' });
+      continue;
+    }
+
+    // ── Submit on-chain ─────────────────────────────────────────────────────
+    let onChainResult;
+    try {
+      onChainResult = await submitExtension({ streamId, extensionDurationSeconds, nonce, expiry, signature });
+    } catch (err) {
+      console.error('[webhook] On-chain submission failed:', err);
+      results.push({ streamId, status: 'error', error: err.message, voucher: { streamId, extensionDurationSeconds, nonce, expiry, signature } });
+      continue;
+    }
+
+    // ── Persist ─────────────────────────────────────────────────────────────
+    await recordExtension({
       streamId,
-      extensionDurationSeconds,
-      nonce,
-      expiry,
-      signature,
+      repository:    repo,
+      prNumber,
+      eventRef,
+      chainId:       onChainResult.chainId,
+      chainName:     onChainResult.chainName,
+      txHash:        onChainResult.txHash,
+      blockNumber:   onChainResult.blockNumber,
+      gasUsed:       onChainResult.gasUsed,
+      voucherExpiry: expiry,
     });
-  } catch (err) {
-    console.error('[webhook] On-chain submission failed:', err);
-    return res.status(500).json({
-      received: true,
-      success:  false,
-      error:    `On-chain submission failed: ${err.message}`,
-      // Voucher is still valid — caller can submit manually within the expiry window
-      voucher:  { streamId, extensionDurationSeconds, nonce, expiry, signature },
-    });
+
+    console.log(`[webhook] ✓ Extension complete | stream=${streamId} | tx=${onChainResult.txHash}`);
+    results.push({ streamId, status: 'extended', verification: verificationResult, onChain: onChainResult });
   }
 
-  // ── Persist to DB (replay guard + history) ───────────────────────────────
-  await recordExtension({
-    streamId,
-    repository:    repo,
-    prNumber:      pr.number,
-    chainId:       onChainResult.chainId,
-    chainName:     onChainResult.chainName,
-    txHash:        onChainResult.txHash,
-    blockNumber:   onChainResult.blockNumber,
-    gasUsed:       onChainResult.gasUsed,
-    voucherExpiry: expiry,
-  });
-
-  console.log(`[webhook] ✓ Extension complete | stream=${streamId} | tx=${onChainResult.txHash}`);
-
-  return res.json({
-    received:     true,
-    success:      true,
-    verification: verificationResult,
-    onChain:      onChainResult,
-    voucher: {
-      streamId,
-      extensionDurationSeconds,
-      nonce,
-      expiry,
-      signature,
-    },
-  });
+  return res.json({ received: true, success: true, results });
 });
 
 // ─── GET /api/v1/username/check/:username ─────────────────────────────────────

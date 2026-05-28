@@ -132,6 +132,8 @@ export async function initDb() {
     // contract_address — tracks which deployed contract owns this stream so
     // re-deploys don't orphan old stream records
     'ALTER TABLE stream_registry ADD COLUMN contract_address TEXT',
+    // event_ref — stores PR#N or commit SHA; replaces pr_number as the replay-guard key
+    'ALTER TABLE processed_extensions ADD COLUMN event_ref TEXT',
   ];
   for (const sql of migrations) {
     try { await db.execute(sql); } catch { /* column already exists */ }
@@ -145,14 +147,15 @@ export async function initDb() {
 /**
  * Check if a (streamId, repository, prNumber) has already been processed.
  */
-export async function isAlreadyProcessed(streamId, repository, prNumber) {
+export async function isAlreadyProcessed(streamId, repository, eventRef) {
   const db = getDb();
   if (!db) return false;
   const result = await db.execute({
     sql: `SELECT 1 FROM processed_extensions
-          WHERE stream_id = ? AND repository = ? AND pr_number = ?
+          WHERE stream_id = ? AND repository = ?
+            AND (event_ref = ? OR (event_ref IS NULL AND pr_number = CAST(? AS INTEGER)))
           LIMIT 1`,
-    args: [streamId, repository, prNumber],
+    args: [streamId, repository, String(eventRef), String(eventRef)],
   });
   return result.rows.length > 0;
 }
@@ -172,23 +175,42 @@ export async function isAlreadyProcessed(streamId, repository, prNumber) {
  * @param {number}  [params.voucherExpiry]
  */
 export async function recordExtension({
-  streamId, repository, prNumber,
+  streamId, repository, prNumber, eventRef,
   chainId, chainName,
   txHash, blockNumber, gasUsed, voucherExpiry,
 }) {
   const db = getDb();
   if (!db) return;
+  const ref = eventRef ?? (prNumber != null ? `PR#${prNumber}` : null);
   await db.execute({
     sql: `INSERT OR IGNORE INTO processed_extensions
-            (stream_id, repository, pr_number, chain_id, chain_name,
+            (stream_id, repository, pr_number, event_ref, chain_id, chain_name,
              tx_hash, block_number, gas_used, voucher_expiry)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
-      streamId, repository, prNumber,
+      streamId, repository, prNumber ?? null, ref,
       chainId, chainName,
       txHash ?? null, blockNumber ?? null, gasUsed ?? null, voucherExpiry ?? null,
     ],
   });
+}
+
+// ─── Stream Repo Lookup ───────────────────────────────────────────────────────
+
+/**
+ * Find all streams registered for a given GitHub repo.
+ * Used by the webhook to auto-identify streams from push events
+ * without requiring metadata in the commit message.
+ */
+export async function getStreamsByRepo(repo) {
+  const db = getDb();
+  if (!db) return [];
+  const result = await db.execute({
+    sql:  `SELECT * FROM stream_registry
+           WHERE verification_target = ? OR github_repo = ?`,
+    args: [repo, repo],
+  });
+  return result.rows;
 }
 
 // ─── Extension History ────────────────────────────────────────────────────────

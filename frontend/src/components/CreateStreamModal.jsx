@@ -296,6 +296,8 @@ export default function CreateStreamModal() {
   const { writeContract: doApprove, data: approveTxHash, isPending: approvePending, error: approveError } = useWriteContract();
   const { isLoading: approveConfirming, isSuccess: approveSuccess } = useWaitForTransactionReceipt({ hash: approveTxHash });
   useEffect(() => { if (approveSuccess) { refetchAllowance(); setStep(2); } }, [approveSuccess]);
+  // Auto-advance past approve step when allowance is already sufficient
+  useEffect(() => { if (step === 1 && needsApproval === false) setStep(2); }, [step, needsApproval]);
 
   // Create
   const { writeContract: doCreate, data: createTxHash, isPending: createPending, error: createError } = useWriteContract();
