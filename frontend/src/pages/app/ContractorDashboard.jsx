@@ -6,7 +6,7 @@ import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts';
 import { useNavigate } from 'react-router-dom';
-import { Inbox, TrendingUp, Clock, ArrowRight, Server } from 'lucide-react';
+import { Inbox, TrendingUp, Clock, ArrowRight } from 'lucide-react';
 import { useProfile }          from '../../hooks/useProfile';
 import { useStreams }           from '../../hooks/useStreams';
 import { useStreamEvents }      from '../../hooks/useStreamEvents';
@@ -470,14 +470,10 @@ export default function ContractorDashboard() {
         </div>
 
         {online !== null && (
-          <div
-            className={`shrink-0 flex items-center gap-1.5 px-2 py-1 rounded-lg border
-              ${online ? 'border-accent/20 bg-accent/5 text-accent' : 'border-border text-muted/60'}`}
+          <span
+            className={`w-2 h-2 rounded-full shrink-0 ${online ? 'bg-accent pulse-dot' : 'bg-muted/40'}`}
             title={online ? 'Automation agent online' : 'Automation agent offline'}
-          >
-            <Server size={11} />
-            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${online ? 'bg-accent pulse-dot' : 'bg-muted/50'}`} />
-          </div>
+          />
         )}
       </div>
 

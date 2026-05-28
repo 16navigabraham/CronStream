@@ -7,7 +7,7 @@ import { useStreams }      from '../../hooks/useStreams';
 import { useStreamEvents } from '../../hooks/useStreamEvents';
 import { useAgentStatus }  from '../../hooks/useAgentStatus';
 import { useCreateStream } from '../../context/CreateStreamContext';
-import { Plus, Inbox, History, ArrowRight, Server } from 'lucide-react';
+import { Plus, Inbox, History, ArrowRight } from 'lucide-react';
 import StreamCard    from '../../components/StreamCard';
 import MagneticDock  from '../../components/MagneticDock';
 import { getContractAddress, ROUTER_ABI } from '../../lib/wagmi';
@@ -286,26 +286,24 @@ export default function CompanyDashboard() {
                   company
                 </span>
               </div>
-              {online !== null && (
-                <div
-                  className={`mt-1 hidden sm:inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border
-                    ${online ? 'border-accent/20 bg-accent/5 text-accent' : 'border-border text-muted/60'}`}
-                  title={online ? 'Automation agent online' : 'Automation agent offline'}
-                >
-                  <Server size={11} />
-                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${online ? 'bg-accent pulse-dot' : 'bg-muted/50'}`} />
-                </div>
-              )}
             </div>
           </div>
-          <button
-            className="btn-primary py-2 px-3 sm:px-4 text-xs sm:text-sm shrink-0 flex items-center gap-1.5"
-            onClick={() => openModal()}
-          >
-            <Plus size={14} />
-            <span className="hidden sm:inline">New Stream</span>
-            <span className="sm:hidden">New</span>
-          </button>
+          <div className="flex items-center gap-3 shrink-0">
+            {online !== null && (
+              <span
+                className={`w-2 h-2 rounded-full shrink-0 ${online ? 'bg-accent pulse-dot' : 'bg-muted/40'}`}
+                title={online ? 'Automation agent online' : 'Automation agent offline'}
+              />
+            )}
+            <button
+              className="btn-primary py-2 px-3 sm:px-4 text-xs sm:text-sm shrink-0 flex items-center gap-1.5"
+              onClick={() => openModal()}
+            >
+              <Plus size={14} />
+              <span className="hidden sm:inline">New Stream</span>
+              <span className="sm:hidden">New</span>
+            </button>
+          </div>
         </div>
         {(profile?.github || profile?.twitter || profile?.linkedin || profile?.farcaster || profile?.website) && (
           <div className="mt-3 ml-[52px]">
