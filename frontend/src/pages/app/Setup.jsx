@@ -162,19 +162,22 @@ export default function Setup() {
               />
             </div>
 
-            <div>
-              <label className="label">GitHub {isCompany ? 'org or username' : 'username'}</label>
-              <div className="relative">
-                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted font-mono text-sm select-none">github.com/</span>
-                <input
-                  name="github"
-                  value={form.github}
-                  onChange={handleChange}
-                  placeholder={isCompany ? 'acme-org' : 'alexj'}
-                  className="input pl-[7.5rem]"
-                />
+            {!isCompany && (
+              <div>
+                <label className="label">GitHub username</label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted font-mono text-sm select-none">github.com/</span>
+                  <input
+                    name="github"
+                    value={form.github}
+                    onChange={handleChange}
+                    placeholder="alexj"
+                    className="input pl-[7.5rem]"
+                  />
+                </div>
+                <p className="text-xs text-muted mt-1">Shown on your public contractor profile so companies can find you.</p>
               </div>
-            </div>
+            )}
 
             {isCompany && (
               <div>
@@ -186,6 +189,14 @@ export default function Setup() {
                   placeholder="https://acme.com"
                   className="input"
                 />
+              </div>
+            )}
+
+            {isCompany && (
+              <div className="bg-accent/5 border border-accent/20 rounded-xl px-4 py-3">
+                <p className="text-xs text-muted leading-relaxed">
+                  Connect GitHub, Jira, Bitbucket, or Figma after setup in <span className="text-accent">Settings → Integrations</span> to enable contractor verification.
+                </p>
               </div>
             )}
 

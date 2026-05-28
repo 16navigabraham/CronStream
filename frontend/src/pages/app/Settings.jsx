@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect, useCallback } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAccount } from 'wagmi';
 import { Key, ShieldCheck, Zap, ExternalLink, Layers } from 'lucide-react';
 import { useProfile }     from '../../hooks/useProfile';
@@ -50,110 +50,80 @@ function Section({ title, desc, action, children }) {
   );
 }
 
-// ─── Integrations ─────────────────────────────────────────────────────────────
+const AGENT_URL = import.meta.env.VITE_AGENT_URL ?? 'http://localhost:3000';
+
 const INTEGRATIONS = [
-  { key: 'github',    name: 'GitHub',    icon: <GithubIcon />,    bg: 'bg-white/5',       desc: 'Verify merged PRs and passing CI', fields: null },
-  { key: 'jira',      name: 'Jira',      icon: <JiraIcon />,      bg: 'bg-blue-500/10',   desc: 'Verify ticket status — Done, In Review, or custom states',
-    fields: [
-      { name: 'jira_url',   label: 'Workspace URL', placeholder: 'https://acme.atlassian.net', type: 'url' },
-      { name: 'jira_email', label: 'Account email', placeholder: 'you@acme.com',               type: 'email' },
-      { name: 'jira_token', label: 'API token',     placeholder: 'ATATT3x…',                   type: 'password' },
-    ],
-  },
-  { key: 'bitbucket', name: 'Bitbucket', icon: <BitbucketIcon />, bg: 'bg-blue-400/10',   desc: 'Verify merged PRs and build pipelines',
-    fields: [
-      { name: 'bitbucket_workspace', label: 'Workspace',    placeholder: 'acme-org',  type: 'text' },
-      { name: 'bitbucket_user',      label: 'Username',     placeholder: 'you',        type: 'text' },
-      { name: 'bitbucket_password',  label: 'App password', placeholder: 'ATBBxxxx…', type: 'password' },
-    ],
-  },
-  { key: 'figma',     name: 'Figma',     icon: <FigmaIcon />,     bg: 'bg-purple-500/10', desc: 'Verify approved frames and published components',
-    fields: [
-      { name: 'figma_token', label: 'Personal access token', placeholder: 'figd_…', type: 'password' },
-    ],
-  },
+  { key: 'github',    name: 'GitHub',    icon: <GithubIcon />,    bg: 'bg-white/5',       desc: 'Verify merged PRs and passing CI',              connectedKey: 'github_connected' },
+  { key: 'atlassian', name: 'Jira',      icon: <JiraIcon />,      bg: 'bg-blue-500/10',   desc: 'Verify ticket status — Done, In Review, or custom states', connectedKey: 'atlassian_connected' },
+  { key: 'bitbucket', name: 'Bitbucket', icon: <BitbucketIcon />, bg: 'bg-blue-400/10',   desc: 'Verify merged PRs and build pipelines',         connectedKey: 'bitbucket_connected' },
+  { key: 'figma',     name: 'Figma',     icon: <FigmaIcon />,     bg: 'bg-purple-500/10', desc: 'Verify approved frames and published components', connectedKey: 'figma_connected' },
 ];
 
-function IntegrationsSection({ profile, saveProfile, form, role }) {
-  const { authFetch } = useAuth();
-  const [open,    setOpen]    = useState(null);
-  const [editAll, setEditAll] = useState(false);
-  const [creds,   setCreds]   = useState({});
-  const [saving,  setSaving]  = useState(false);
-  const [saved,   setSavedI]  = useState(null);
+function IntegrationsSection({ profile }) {
+  const { authFetch }  = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [connecting,   setConnecting]   = useState(null);
+  const [toast,        setToast]        = useState(null);
 
-  function isConnected(key) {
-    if (key === 'github')    return !!profile?.github;
-    if (key === 'jira')      return !!profile?.jira_url;
-    if (key === 'bitbucket') return !!profile?.bitbucket_workspace;
-    if (key === 'figma')     return !!profile?.figma_token;
-    return false;
-  }
+  // Read OAuth callback result from URL
+  useEffect(() => {
+    const provider = searchParams.get('oauth');
+    const status   = searchParams.get('status');
+    const message  = searchParams.get('message');
+    if (!provider || !status) return;
+    setToast({ provider, status, message });
+    setTimeout(() => setToast(null), 5000);
+    setSearchParams({}, { replace: true });
+  }, []);
 
-  function prefillAll() {
-    const all = {};
-    INTEGRATIONS.forEach(({ fields }) => {
-      if (fields) fields.forEach(f => { all[f.name] = profile?.[f.name] ?? ''; });
-    });
-    return all;
-  }
-
-  function toggleEditAll() {
-    if (editAll) { setEditAll(false); setOpen(null); }
-    else { setEditAll(true); setOpen(null); setCreds(prefillAll()); }
-  }
-
-  function toggle(key) {
-    if (editAll) return;
-    const isOpening = open !== key;
-    setOpen(isOpening ? key : null);
-    if (isOpening) {
-      const intg = INTEGRATIONS.find(i => i.key === key);
-      if (intg?.fields) {
-        const prefill = {};
-        intg.fields.forEach(f => { prefill[f.name] = profile?.[f.name] ?? ''; });
-        setCreds(prefill);
-      }
+  const connect = useCallback(async (provider) => {
+    setConnecting(provider);
+    try {
+      const res  = await authFetch(`${AGENT_URL}/api/v1/auth/${provider}/initiate`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? 'Failed to initiate');
+      window.location.href = data.redirectUrl;
+    } catch (err) {
+      setToast({ provider, status: 'error', message: err.message });
+      setTimeout(() => setToast(null), 4000);
+      setConnecting(null);
     }
-  }
+  }, [authFetch]);
 
-  async function handleSave(key) {
-    setSaving(true);
-    await saveProfile({ ...form, role, ...creds }, { authFetch });
-    setSaving(false);
-    setSavedI(key);
-    setTimeout(() => setSavedI(null), 2000);
-    if (editAll) { setEditAll(false); setOpen(null); }
-    else setOpen(null);
-  }
-
-  async function handleDisconnect(key) {
-    const intg = INTEGRATIONS.find(i => i.key === key);
-    if (!intg?.fields) return;
-    const clear = {};
-    intg.fields.forEach(f => { clear[f.name] = null; });
-    await saveProfile({ ...form, role, ...clear }, { authFetch });
-    setOpen(null);
-  }
+  const disconnect = useCallback(async (provider) => {
+    try {
+      await authFetch(`${AGENT_URL}/api/v1/auth/${provider}`, { method: 'DELETE' });
+      setToast({ provider, status: 'disconnected' });
+      setTimeout(() => setToast(null), 3000);
+    } catch {
+      setToast({ provider, status: 'error', message: 'Disconnect failed' });
+      setTimeout(() => setToast(null), 4000);
+    }
+  }, [authFetch]);
 
   return (
     <>
+      {/* Toast */}
+      {toast && (
+        <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-xl border text-sm font-mono shadow-lg
+          ${toast.status === 'success'      ? 'bg-accent/10 border-accent/30 text-accent' :
+            toast.status === 'disconnected' ? 'bg-dark border-border text-muted' :
+            'bg-red-500/10 border-red-500/30 text-red-400'}`}>
+          {toast.status === 'success'      ? `✓ ${toast.provider} connected` :
+           toast.status === 'disconnected' ? `${toast.provider} disconnected` :
+           `${toast.provider}: ${toast.message ?? 'Connection failed'}`}
+        </div>
+      )}
+
       <Section
         title="Work verification sources"
-        desc="Connect the tools your team uses to track contractor deliverables. The CronStream agent queries these to verify milestone completion before extending a stream."
-        action={
-          <button onClick={toggleEditAll}
-            className={`text-xs font-mono border px-3 py-1.5 rounded-lg transition-colors
-              ${editAll ? 'border-accent/40 bg-accent/10 text-accent' : 'border-border text-muted hover:text-white hover:border-accent/30'}`}>
-            {editAll ? 'Cancel editing' : 'Edit all'}
-          </button>
-        }
+        desc="Connect the tools your team uses to track contractor deliverables. The agent queries these to verify milestone completion before extending a stream."
       >
-        {INTEGRATIONS.map(({ key, name, icon, bg, desc, fields }) => {
-          const connected = isConnected(key);
-          const expanded  = editAll ? !!fields : open === key;
+        {INTEGRATIONS.map(({ key, name, icon, bg, desc, connectedKey }) => {
+          const connected = !!profile?.[connectedKey];
+          const loading   = connecting === key;
           return (
-            <div key={key} className="border border-border rounded-xl overflow-hidden bg-dark/40">
+            <div key={key} className="border border-border rounded-xl bg-dark/40">
               <div className="flex items-center gap-3 px-4 py-3">
                 <div className={`w-8 h-8 rounded-lg border border-border ${bg} flex items-center justify-center shrink-0`}>
                   {icon}
@@ -162,66 +132,37 @@ function IntegrationsSection({ profile, saveProfile, form, role }) {
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-semibold">{name}</span>
                     {connected && (
-                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-full border border-accent/30 bg-accent/5 text-accent">connected</span>
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-full border border-accent/30 bg-accent/5 text-accent">
+                        connected
+                      </span>
                     )}
                   </div>
                   <p className="text-xs text-muted">{desc}</p>
                 </div>
-                {!editAll && (
-                  <div className="flex items-center gap-2 shrink-0">
-                    {connected && fields && (
-                      <button onClick={() => handleDisconnect(key)}
-                        className="text-xs text-red-400 hover:text-red-300 font-mono transition-colors">
-                        Remove
-                      </button>
-                    )}
+                <div className="flex items-center gap-2 shrink-0">
+                  {connected && (
                     <button
-                      onClick={() => fields ? toggle(key) : null}
-                      className={`text-xs font-mono border px-3 py-1.5 rounded-lg transition-colors
-                        ${!fields ? 'border-accent/30 bg-accent/5 text-accent cursor-default'
-                          : expanded ? 'border-accent/30 text-accent bg-accent/5'
-                          : connected ? 'border-border text-muted hover:text-white'
-                          : 'border-accent/30 text-accent hover:bg-accent/5'}`}
+                      onClick={() => disconnect(key)}
+                      className="text-xs text-red-400 hover:text-red-300 font-mono transition-colors"
                     >
-                      {!fields ? 'Profile tab' : expanded ? 'Cancel' : connected ? 'Edit' : 'Connect'}
+                      Disconnect
                     </button>
-                  </div>
-                )}
-              </div>
-
-              {expanded && fields && (
-                <div className="border-t border-border px-4 py-4 flex flex-col gap-3">
-                  {fields.map(f => (
-                    <div key={f.name}>
-                      <label className="label">{f.label}</label>
-                      <input type={f.type} value={creds[f.name] ?? ''} onChange={e => setCreds(c => ({ ...c, [f.name]: e.target.value }))}
-                        placeholder={f.placeholder} className="input" autoComplete="off" />
-                    </div>
-                  ))}
-                  {!editAll && (
-                    <>
-                      <button onClick={() => handleSave(key)} disabled={saving} className="btn-primary py-2 text-sm disabled:opacity-50">
-                        {saving ? 'Saving…' : saved === key ? '✓ Saved' : `Save ${name} credentials`}
-                      </button>
-                      <p className="text-xs text-muted">Credentials are stored encrypted and used only by your agent node.</p>
-                    </>
                   )}
+                  <button
+                    disabled={loading}
+                    onClick={() => connect(key)}
+                    className={`text-xs font-mono border px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed
+                      ${connected
+                        ? 'border-border text-muted hover:text-white hover:border-accent/30'
+                        : 'border-accent/30 bg-accent/5 text-accent hover:bg-accent/10'}`}
+                  >
+                    {loading ? 'Redirecting…' : connected ? 'Reconnect' : `Connect ${name}`}
+                  </button>
                 </div>
-              )}
+              </div>
             </div>
           );
         })}
-
-        {editAll && (
-          <div className="flex items-center gap-3 pt-1">
-            <button onClick={() => handleSave('all')} disabled={saving} className="btn-primary flex-1 py-2.5 text-sm disabled:opacity-50">
-              {saving ? 'Saving…' : saved === 'all' ? '✓ All saved' : 'Save all integrations'}
-            </button>
-            <button onClick={toggleEditAll} className="py-2.5 px-4 rounded-xl border border-border text-sm text-muted hover:text-white transition-colors">
-              Cancel
-            </button>
-          </div>
-        )}
       </Section>
 
       <Section title="How verification works">
@@ -328,7 +269,7 @@ export default function Settings() {
 
       {/* ── Integrations ────────────────────────────────────────────────────── */}
       {tab === 'integrations' && (
-        <IntegrationsSection profile={profile} saveProfile={saveProfile} form={form} role={role} />
+        <IntegrationsSection profile={profile} />
       )}
 
       {/* ── Developer ───────────────────────────────────────────────────────── */}
