@@ -651,11 +651,9 @@ app.post('/api/v1/profile', verifyJwt, async (req, res) => {
       }
     }
 
-    if (apiKey) console.log('[profile:post] saving apiKey for', address, '— key prefix:', apiKey.slice(0, 12));
     await upsertProfile({ address, username, role: finalRole, name, github, twitter, linkedin, farcaster, website, avatarUrl, apiKey,
       jiraUrl, jiraEmail, jiraToken, bitbucketWorkspace, bitbucketUser, bitbucketPassword, figmaToken, displayCurrency });
     const profile = await getProfile(address);
-    console.log('[profile:post] after upsert, has_api_key:', !!profile?.api_key, 'for', address);
     // Strip credentials before sending to client
     return res.json({ profile: publicProfile(profile) });
   } catch (err) {

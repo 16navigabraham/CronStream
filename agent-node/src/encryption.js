@@ -168,6 +168,8 @@ export function decryptProfile(row) {
     }
   }
 
+  // Record whether a key exists BEFORE deleting the digest — callers use has_api_key for UI
+  decrypted.has_api_key = !!decrypted.api_key;
   // Never return the HMAC digest to callers — it's useless outside of DB lookups
   delete decrypted.api_key;
 
@@ -187,7 +189,7 @@ export function publicProfile(row) {
   } = row;
   return {
     ...pub,
-    has_api_key:          !!row.api_key,
+    has_api_key:          row.has_api_key ?? false,
     jira_connected:       !!row.jira_url && !!row.jira_email && !!row.jira_token,
     bitbucket_connected:  !!row.bitbucket_workspace && !!row.bitbucket_user && !!row.bitbucket_password,
     figma_connected:      !!row.figma_token,
