@@ -12,10 +12,11 @@ const CACHE_KEY = addr => `cronstream_profile_${addr?.toLowerCase()}`;
 // cache. Every concurrent caller waits on the same fetch; rapid re-mounts skip
 // the network entirely and read from the module cache.
 
-const _inFlight  = new Map();  // address → Promise<serverProfile | null>
-const _memCache  = new Map();  // address → { profile, ts }
-const _listeners = new Map();  // address → Set<(profile) => void>
-const MEM_TTL    = 30_000;     // 30 s — skip re-fetch if result is this fresh
+const _inFlight      = new Map();  // address → Promise<serverProfile | null>
+const _memCache      = new Map();  // address → { profile, ts }
+const _listeners     = new Map();  // address → Set<(profile) => void>
+const _invalidatedAt = new Map();  // address → timestamp — stale fetch guard
+const MEM_TTL        = 30_000;     // 30 s — skip re-fetch if result is this fresh
 
 function notifyListeners(address, profile) {
   _listeners.get(address?.toLowerCase())?.forEach(fn => fn(profile));
@@ -33,11 +34,14 @@ function fetchFromServer(address) {
   // 2. Already in-flight — share the promise
   if (_inFlight.has(key)) return _inFlight.get(key);
 
-  // 3. New request
+  // 3. New request — snapshot invalidation counter so stale responses can be discarded
+  const snapshotTs = _invalidatedAt.get(key) ?? 0;
   const promise = fetch(`${AGENT_URL}/api/v1/profile/${address}`)
     .then(res => {
       if (!res.ok) return null;
       return res.json().then(({ profile }) => {
+        // Discard if a save invalidated the cache after this fetch started
+        if ((_invalidatedAt.get(key) ?? 0) > snapshotTs) return null;
         _memCache.set(key, { profile, ts: Date.now() });
         return profile;
       });
@@ -51,7 +55,9 @@ function fetchFromServer(address) {
 
 /** Invalidate the memory cache for an address (call after saveProfile). */
 function invalidateCache(address) {
-  _memCache.delete(address?.toLowerCase());
+  const key = address?.toLowerCase();
+  _memCache.delete(key);
+  _invalidatedAt.set(key, Date.now()); // marks in-flight fetches as stale
 }
 
 /**
@@ -74,12 +80,16 @@ export function useProfile(address) {
   });
   const [loading,  setLoading]  = useState(false);
   const [synced,   setSynced]   = useState(false);
-  const mountedRef = useRef(true);
+  const mountedRef  = useRef(true);
+  const profileRef  = useRef(null);
 
   useEffect(() => {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
   }, []);
+
+  // Keep profileRef in sync so saveProfile can read current value without it being a dep
+  useEffect(() => { profileRef.current = profile; }, [profile]);
 
   // Subscribe to cross-instance profile updates (e.g. Setup saves → AppShell nav refreshes)
   useEffect(() => {
@@ -149,7 +159,7 @@ export function useProfile(address) {
       avatar: data.avatar,
       has_api_key: data.apiKey !== undefined
         ? data.apiKey !== null
-        : !!(profile?.has_api_key),
+        : !!(profileRef.current?.has_api_key),
     };
     setProfile(optimistic);
     localStorage.setItem(CACHE_KEY(address), JSON.stringify(optimistic));
@@ -181,7 +191,7 @@ export function useProfile(address) {
     } catch (err) {
       console.warn('[useProfile] Save to server failed (cache preserved):', err.message);
     }
-  }, [address, profile]);
+  }, [address]);
 
   return { profile, saveProfile, loading, synced, hasProfile: !!profile };
 }

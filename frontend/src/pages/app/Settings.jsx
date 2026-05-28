@@ -277,7 +277,7 @@ export default function Settings() {
     if (profile && !isCompany) navigate('/app/profile', { replace: true });
   }, [profile, isCompany]);
 
-  function generateKey() {
+  async function generateKey() {
     const chars  = 'abcdefghijklmnopqrstuvwxyz0123456789';
     const rand   = Array.from({ length: 32 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
     const newKey = `cs_live_${rand}`;
@@ -285,7 +285,7 @@ export default function Settings() {
     setKeyCopied(false);
     setKeyState('idle');
     setHasKey(true);
-    saveProfile({ ...form, role, apiKey: newKey }, { authFetch });
+    await saveProfile({ ...form, role, apiKey: newKey }, { authFetch });
   }
 
   function deleteKey() {
