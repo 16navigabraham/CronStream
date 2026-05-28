@@ -364,7 +364,7 @@ app.post('/api/v1/verify-milestone', sensitiveLimit, devAuth(getProfileByApiKey)
 //   CronStream-Nonce: <integer>
 // The agent parses these from the PR body to know which stream to extend.
 
-app.post('/api/v1/webhook/github', sensitiveLimit, async (req, res) => {
+app.post('/api/v1/webhook/github', sensitiveLimit, async (req, res, next) => { try {
   // req.body is a raw Buffer when express.raw() ran (application/json content-type).
   // Fall back to empty buffer for malformed requests — HMAC check will reject them.
   const rawBody = Buffer.isBuffer(req.body)
@@ -405,6 +405,7 @@ app.post('/api/v1/webhook/github', sensitiveLimit, async (req, res) => {
     }
   } else {
     if (process.env.NODE_ENV === 'production') {
+      console.error('[webhook] GITHUB_WEBHOOK_SECRET not set — rejecting request. Add it to Render env vars and set the same value in GitHub webhook settings.');
       return res.status(401).json({ error: 'Webhook secret not configured — set GITHUB_WEBHOOK_SECRET' });
     }
     console.warn('[webhook] GITHUB_WEBHOOK_SECRET not set — signature check skipped (dev only)');
@@ -581,7 +582,10 @@ app.post('/api/v1/webhook/github', sensitiveLimit, async (req, res) => {
   }
 
   return res.json({ received: true, success: true, results });
-});
+} catch (err) {
+  console.error('[webhook] Unhandled error:', err);
+  return next(err);
+}});
 
 // ─── GET /api/v1/username/check/:username ─────────────────────────────────────
 // Returns { available: bool } — called during signup to validate uniqueness.

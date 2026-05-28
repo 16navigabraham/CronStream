@@ -296,12 +296,10 @@ export default function CreateStreamModal() {
   const { writeContract: doApprove, data: approveTxHash, isPending: approvePending, error: approveError } = useWriteContract();
   const { isLoading: approveConfirming, isSuccess: approveSuccess } = useWaitForTransactionReceipt({ hash: approveTxHash });
   useEffect(() => { if (approveSuccess) { refetchAllowance(); setStep(2); } }, [approveSuccess]);
-  // Auto-advance past approve step only once allowance has loaded and is sufficient
-  useEffect(() => { if (step === 1 && allowance != null && !needsApproval) setStep(2); }, [step, allowance, needsApproval]);
 
   // Create
   const { writeContract: doCreate, data: createTxHash, isPending: createPending, error: createError } = useWriteContract();
-  const { isLoading: createConfirming, isSuccess: createSuccess, data: createReceipt } = useWaitForTransactionReceipt({ hash: createTxHash });
+  const { isLoading: createConfirming, isSuccess: createSuccess, isError: createReceiptError, data: createReceipt } = useWaitForTransactionReceipt({ hash: createTxHash });
 
   useEffect(() => {
     if (!createSuccess || !createReceipt) return;
@@ -539,20 +537,11 @@ export default function CreateStreamModal() {
                   {approveError.shortMessage ?? approveError.message ?? 'Approval failed'}
                 </div>
               )}
-              {needsApproval !== false ? (
-                <button onClick={() => doApprove({ address: form.token, abi: ERC20_ABI, functionName: 'approve', args: [getContractAddress(chainId), totalCostRaw] })}
-                  disabled={approvePending || !!approveTxHash}
-                  className="btn-primary w-full disabled:opacity-40">
-                  {approvePending ? 'Confirm in wallet…' : approveTxHash ? 'Approving…' : `Approve ${totalCostDisplay} ${selectedToken.symbol}`}
-                </button>
-              ) : (
-                <div className="flex flex-col gap-2">
-                  <div className="text-xs text-accent font-mono bg-accent/5 border border-accent/20 rounded-xl px-4 py-2.5 flex items-center gap-2">
-                    <span>✓</span> Already approved
-                  </div>
-                  <button className="btn-primary w-full" onClick={() => setStep(2)}>Continue →</button>
-                </div>
-              )}
+              <button onClick={() => doApprove({ address: form.token, abi: ERC20_ABI, functionName: 'approve', args: [getContractAddress(chainId), totalCostRaw] })}
+                disabled={approvePending || (!!approveTxHash && !approveError)}
+                className="btn-primary w-full disabled:opacity-40">
+                {approvePending ? 'Confirm in wallet…' : (approveTxHash && !approveError) ? 'Approving…' : `Approve ${totalCostDisplay} ${selectedToken.symbol}`}
+              </button>
             </div>
           )}
 
@@ -586,9 +575,9 @@ export default function CreateStreamModal() {
               )}
               <button
                 onClick={() => doCreate({ address: getContractAddress(chainId), abi: ROUTER_ABI, functionName: 'createStream', args: [recipientAddr, form.token, ratePerSecond, 0n, totalCostRaw] })}
-                disabled={createPending || !!createTxHash || ratePerSecond === 0n}
+                disabled={createPending || (!!createTxHash && !createReceiptError && !createError) || ratePerSecond === 0n}
                 className="btn-primary w-full disabled:opacity-40">
-                {createPending ? 'Confirm in wallet…' : createTxHash ? 'Creating stream…' : 'Deposit & create stream'}
+                {createPending ? 'Confirm in wallet…' : (createTxHash && !createReceiptError && !createError) ? 'Creating stream…' : 'Deposit & create stream'}
               </button>
             </div>
           )}
