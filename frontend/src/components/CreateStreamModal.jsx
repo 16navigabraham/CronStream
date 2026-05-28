@@ -246,17 +246,17 @@ export default function CreateStreamModal() {
   const milestoneCountInt = Math.max(1, parseInt(form.milestoneCount || '1', 10));
   const milestoneCount    = BigInt(milestoneCountInt);
 
-  // ratePerSecond = ceil(milestoneAmount / windowSeconds)
+  // Total deposit is exactly milestoneAmount × periods — no ceiling rounding
   const milestoneRaw  = form.milestoneAmount ? parseUnits(form.milestoneAmount, decimals) : 0n;
-  const ratePerSecond = milestoneRaw > 0n && windowSeconds > 0n
-    ? (milestoneRaw + windowSeconds - 1n) / windowSeconds
-    : 0n;
+  const totalCostRaw  = milestoneRaw * milestoneCount;
 
   // Full contract duration = window × number of milestones
   const durationSeconds = windowSeconds * milestoneCount;
 
-  // Total deposit = rate × full duration
-  const totalCostRaw = ratePerSecond > 0n ? ratePerSecond * durationSeconds : 0n;
+  // ratePerSecond = floor(totalDeposit / totalDuration) — streams the exact deposit over the full period
+  const ratePerSecond = totalCostRaw > 0n && durationSeconds > 0n
+    ? totalCostRaw / durationSeconds
+    : 0n;
   const totalCostFloat = totalCostRaw > 0n ? parseFloat(formatUnits(totalCostRaw, decimals)) : 0;
 
   const totalCostDisplay = totalCostRaw > 0n
@@ -520,8 +520,12 @@ export default function CreateStreamModal() {
                   <span>{selectedContractor?.name || `${recipientAddr.slice(0,8)}…${recipientAddr.slice(-6)}`}</span>
                 </div>
                 <div className="flex justify-between px-4 py-3">
+                  <span className="text-muted">Per period</span>
+                  <span>{perMilestoneDisplay} {selectedToken.symbol}</span>
+                </div>
+                <div className="flex justify-between px-4 py-3">
                   <span className="text-muted">Periods</span>
-                  <span>{form.milestoneCount} × {perMilestoneDisplay} {selectedToken.symbol}</span>
+                  <span>{form.milestoneCount} × {WINDOW_OPTIONS.find(w => w.seconds.toString() === form.milestoneWindow)?.label}</span>
                 </div>
                 <div className="flex justify-between px-4 py-3 bg-accent/5">
                   <span className="text-muted">Total deposit</span>
