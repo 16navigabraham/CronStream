@@ -365,8 +365,13 @@ app.post('/api/v1/verify-milestone', sensitiveLimit, devAuth(getProfileByApiKey)
 // The agent parses these from the PR body to know which stream to extend.
 
 app.post('/api/v1/webhook/github', sensitiveLimit, async (req, res) => {
-  // req.body is a raw Buffer here (express.raw middleware registered above)
-  const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.from(JSON.stringify(req.body));
+  // req.body is a raw Buffer when express.raw() ran (application/json content-type).
+  // Fall back to empty buffer for malformed requests — HMAC check will reject them.
+  const rawBody = Buffer.isBuffer(req.body)
+    ? req.body
+    : req.body != null
+      ? Buffer.from(JSON.stringify(req.body))
+      : Buffer.alloc(0);
 
   // ── HMAC signature verification ───────────────────────────────────────────
   const secret = process.env.GITHUB_WEBHOOK_SECRET;
