@@ -143,8 +143,14 @@ export function useProfile(address) {
       ...(data.apiKey !== undefined ? { apiKey: data.apiKey } : {}),
     };
 
-    // Optimistic local update
-    const optimistic = { ...payload, avatar: data.avatar };
+    // Optimistic local update — preserve has_api_key so Settings doesn't flicker
+    const optimistic = {
+      ...payload,
+      avatar: data.avatar,
+      has_api_key: data.apiKey !== undefined
+        ? data.apiKey !== null
+        : !!(profile?.has_api_key),
+    };
     setProfile(optimistic);
     localStorage.setItem(CACHE_KEY(address), JSON.stringify(optimistic));
 
@@ -173,7 +179,7 @@ export function useProfile(address) {
     } catch (err) {
       console.warn('[useProfile] Save to server failed (cache preserved):', err.message);
     }
-  }, [address]);
+  }, [address, profile]);
 
   return { profile, saveProfile, loading, synced, hasProfile: !!profile };
 }
