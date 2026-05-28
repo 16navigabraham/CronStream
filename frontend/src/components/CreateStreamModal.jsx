@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract, usePublicClient, useChainId } from 'wagmi';
-import { parseUnits, formatUnits, parseAbiItem } from 'viem';
+import { parseUnits, formatUnits, parseAbiItem, parseAbi } from 'viem';
 import { getContractAddress, ROUTER_ABI } from '../lib/wagmi';
 import { registerStreamWithAgent }      from '../hooks/useAgentStatus';
 import { useCreateStream }              from '../context/CreateStreamContext';
@@ -12,10 +12,10 @@ import { useWalletTokens }             from '../hooks/useWalletTokens';
 
 const AGENT_URL = import.meta.env.VITE_AGENT_URL ?? 'http://localhost:3000';
 
-const ERC20_ABI = [
+const ERC20_ABI = parseAbi([
   'function approve(address spender, uint256 amount) external returns (bool)',
   'function allowance(address owner, address spender) external view returns (uint256)',
-];
+]);
 
 // Milestone window options — how long each validation window lasts before the stream
 // freezes if the agent hasn't verified a deliverable.
