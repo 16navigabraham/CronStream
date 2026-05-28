@@ -2,7 +2,8 @@
  * AuthContext
  *
  * Manages the SIWE session JWT for the connected wallet.
- * JWT is stored in memory only — never localStorage or cookies.
+ * JWT is stored in sessionStorage — survives page refresh within the tab,
+ * cleared when the tab closes. Never written to localStorage.
  *
  * Exposes:
  *   token         — current JWT string, or null if not signed in
@@ -15,7 +16,30 @@
 import { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react';
 import { useAccount, useSignMessage, useChainId }                              from 'wagmi';
 
-const AGENT_URL = import.meta.env.VITE_AGENT_URL ?? 'http://localhost:3000';
+const AGENT_URL  = import.meta.env.VITE_AGENT_URL ?? 'http://localhost:3000';
+const SESSION_KEY = 'cs_session';
+
+function readSession() {
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const { token, address, exp } = JSON.parse(raw);
+    if (Date.now() / 1000 > exp) { sessionStorage.removeItem(SESSION_KEY); return null; }
+    return { token, address };
+  } catch { return null; }
+}
+
+function writeSession(token, address) {
+  try {
+    // Decode exp from JWT payload (no signature verification needed here)
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify({ token, address, exp: payload.exp }));
+  } catch { /* ignore */ }
+}
+
+function clearSession() {
+  sessionStorage.removeItem(SESSION_KEY);
+}
 
 const AuthContext = createContext(null);
 
@@ -24,18 +48,30 @@ export function AuthProvider({ children }) {
   const chainId                  = useChainId();
   const { signMessageAsync }     = useSignMessage();
 
-  const [token,     setToken]     = useState(null);
+  const saved = readSession();
+  const [token,     setToken]     = useState(saved?.token   ?? null);
   const [signing,   setSigning]   = useState(false);
   const [signError, setSignError] = useState(null);
 
-  // Track which address the current token was issued for
-  const tokenAddressRef = useRef(null);
+  const tokenAddressRef = useRef(saved?.address ?? null);
 
-  // Clear session when wallet disconnects or switches account
+  // Clear session when wallet disconnects or switches account.
+  // Guard against wagmi's brief isConnected=false on mount by checking address too.
   useEffect(() => {
-    if (!isConnected || (token && tokenAddressRef.current?.toLowerCase() !== address?.toLowerCase())) {
+    if (!isConnected && !address) {
       setToken(null);
       tokenAddressRef.current = null;
+      clearSession();
+      return;
+    }
+    if (
+      address &&
+      tokenAddressRef.current &&
+      tokenAddressRef.current.toLowerCase() !== address.toLowerCase()
+    ) {
+      setToken(null);
+      tokenAddressRef.current = null;
+      clearSession();
     }
   }, [isConnected, address]);
 
@@ -44,16 +80,14 @@ export function AuthProvider({ children }) {
     setSigning(true);
     setSignError(null);
     try {
-      // 1. Get a nonce from the agent
       const nonceRes = await fetch(`${AGENT_URL}/api/v1/auth/nonce`);
       if (!nonceRes.ok) throw new Error('Failed to get nonce from agent');
       const { nonce } = await nonceRes.json();
 
-      // 2. Build SIWE message (EIP-4361 format — constructed manually, no Node.js deps)
-      const domain    = window.location.host;
-      const origin    = window.location.origin;
-      const issuedAt  = new Date().toISOString();
-      const message   = [
+      const domain   = window.location.host;
+      const origin   = window.location.origin;
+      const issuedAt = new Date().toISOString();
+      const message  = [
         `${domain} wants you to sign in with your Ethereum account:`,
         address,
         '',
@@ -66,10 +100,8 @@ export function AuthProvider({ children }) {
         `Issued At: ${issuedAt}`,
       ].join('\n');
 
-      // 3. Prompt wallet to sign
       const signature = await signMessageAsync({ message });
 
-      // 4. Verify on the agent and receive JWT
       const authRes = await fetch(`${AGENT_URL}/api/v1/auth/siwe`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -83,9 +115,9 @@ export function AuthProvider({ children }) {
       const { token: jwt } = await authRes.json();
       setToken(jwt);
       tokenAddressRef.current = address;
+      writeSession(jwt, address);
       return jwt;
     } catch (err) {
-      // User rejected the signature — treat as silent cancel, not an error
       if (err.name === 'UserRejectedRequestError' || err.code === 4001) {
         setSignError(null);
       } else {
@@ -100,12 +132,9 @@ export function AuthProvider({ children }) {
   const signOut = useCallback(() => {
     setToken(null);
     tokenAddressRef.current = null;
+    clearSession();
   }, []);
 
-  /**
-   * fetch() wrapper that automatically injects the JWT Authorization header.
-   * Falls back to unauthenticated fetch if no token (for open endpoints).
-   */
   const authFetch = useCallback((url, options = {}) => {
     const headers = { ...(options.headers ?? {}) };
     if (token) headers['Authorization'] = `Bearer ${token}`;
