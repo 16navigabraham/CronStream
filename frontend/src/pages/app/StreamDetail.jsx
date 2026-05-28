@@ -200,6 +200,7 @@ export default function StreamDetail() {
     sender, recipient, token,
     ratePerSecond, startTime, streamValidUntil,
     totalDeposited, totalWithdrawn, rawBalance,
+    verificationSource, verificationTarget,
   } = stream;
 
   const now          = BigInt(Math.floor(Date.now() / 1000));
@@ -333,6 +334,24 @@ export default function StreamDetail() {
                   />
                   <p className="text-muted text-sm mt-2 font-mono">{tokenLabel}</p>
                 </>
+              ) : isPending && isRecipient ? (
+                <>
+                  <p className="text-xs text-yellow-400/60 uppercase tracking-widest mb-3">Awaiting first payment</p>
+                  <p className="text-sm text-muted font-mono leading-relaxed max-w-xs mx-auto">
+                    Submit work via <span className="text-white capitalize">{verificationSource ?? 'GitHub'}</span>
+                    {verificationTarget ? <span> · <span className="text-accent">{verificationTarget}</span></span> : null}
+                    {' '}to unlock your first period. The agent is watching — once it confirms your work, funds start streaming to you.
+                  </p>
+                </>
+              ) : isPending && isSender ? (
+                <>
+                  <p className="text-xs text-yellow-400/60 uppercase tracking-widest mb-3">Stream funded</p>
+                  <p className="text-sm text-muted font-mono leading-relaxed max-w-xs mx-auto">
+                    {parseFloat(formatUnits(totalDeposited ?? 0n, 6)).toFixed(2)} {tokenLabel} is locked and safe. Agent is watching <span className="text-white capitalize">{verificationSource ?? 'GitHub'}</span>
+                    {verificationTarget ? <span> · <span className="text-accent">{verificationTarget}</span></span> : null}
+                    {' '}— funds release when the contractor pushes verified work.
+                  </p>
+                </>
               ) : (
                 <>
                   <p className="text-xs text-muted uppercase tracking-widest mb-2">
@@ -388,9 +407,14 @@ export default function StreamDetail() {
                   />
                 )}
 
-                {/* Sender: pending — waiting for agent first verification */}
+                {/* Contractor: pending — tell them what to do */}
+                {isRecipient && isPending && (
+                  <span className="text-xs text-yellow-400/80 font-mono">Push verified work to start earning</span>
+                )}
+
+                {/* Sender: pending — reassure funds are safe */}
                 {isSender && isPending && (
-                  <span className="text-xs text-yellow-400/80 font-mono">Waiting for first agent verification</span>
+                  <span className="text-xs text-yellow-400/80 font-mono">Waiting for contractor's first verified push</span>
                 )}
 
                 {/* Sender: info when nothing left to reclaim */}

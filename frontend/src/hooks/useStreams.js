@@ -37,18 +37,20 @@ function mapDbRow(r) {
   function bi(v) { try { return v != null ? BigInt(v) : null; } catch { return null; } }
 
   return {
-    streamId:         r.stream_id,
-    sender:           r.sender          ?? null,
-    recipient:        r.recipient       ?? null,
-    token:            r.token           ?? null,
-    ratePerSecond:    bi(r.ratePerSecond)    ?? bi(r.rate_per_second)    ?? 0n,
-    startTime:        bi(r.startTime)        ?? bi(r.start_time)         ?? 0n,
-    streamValidUntil: bi(r.streamValidUntil) ?? bi(r.stream_valid_until) ?? 0n,
-    totalDeposited:   bi(r.totalDeposited)   ?? bi(r.total_deposited)    ?? 0n,
-    totalWithdrawn:   bi(r.totalWithdrawn)   ?? bi(r.total_withdrawn)    ?? 0n,
-    rawBalance:       bi(r.balance)          ?? null,   // null = not yet fetched
-    blockNumber:      null,
-    chainId:          r.chain_id ? Number(r.chain_id) : null,
+    streamId:           r.stream_id,
+    sender:             r.sender          ?? null,
+    recipient:          r.recipient       ?? null,
+    token:              r.token           ?? null,
+    ratePerSecond:      bi(r.ratePerSecond)    ?? bi(r.rate_per_second)    ?? 0n,
+    startTime:          bi(r.startTime)        ?? bi(r.start_time)         ?? 0n,
+    streamValidUntil:   bi(r.streamValidUntil) ?? bi(r.stream_valid_until) ?? 0n,
+    totalDeposited:     bi(r.totalDeposited)   ?? bi(r.total_deposited)    ?? 0n,
+    totalWithdrawn:     bi(r.totalWithdrawn)   ?? bi(r.total_withdrawn)    ?? 0n,
+    rawBalance:         bi(r.balance)          ?? null,
+    verificationSource: r.verification_source  ?? null,
+    verificationTarget: r.verification_target  ?? r.github_repo            ?? null,
+    blockNumber:        null,
+    chainId:            r.chain_id ? Number(r.chain_id) : null,
   };
 }
 
