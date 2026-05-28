@@ -173,8 +173,10 @@ export function useProfile(address) {
         setProfile(enriched);
         localStorage.setItem(CACHE_KEY(address), JSON.stringify(enriched));
         _memCache.set(address.toLowerCase(), { profile: serverProfile, ts: Date.now() });
-        // Notify all other useProfile instances (e.g. AppShell) so nav updates immediately
         notifyListeners(address, enriched);
+      } else {
+        const body = await res.json().catch(() => ({}));
+        console.warn('[useProfile] Profile save failed:', res.status, body);
       }
     } catch (err) {
       console.warn('[useProfile] Save to server failed (cache preserved):', err.message);
