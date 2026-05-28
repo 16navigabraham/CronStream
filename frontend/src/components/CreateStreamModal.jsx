@@ -262,13 +262,14 @@ export default function CreateStreamModal() {
   const totalCostDisplay = totalCostRaw > 0n
     ? totalCostFloat.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     : null;
-  // Derive per-period from total so the math is always consistent
-  const perMilestoneDisplay = totalCostRaw > 0n
-    ? (totalCostFloat / milestoneCountInt).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })
+  // Show the amount the user typed as per-period — ceiling rounding is absorbed into the total deposit
+  const perMilestoneDisplay = form.milestoneAmount
+    ? parseFloat(form.milestoneAmount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 6 })
     : null;
 
   function handleClose() {
-    if (step === 1 || step === 2) return; // block close mid-tx
+    const inProgress = approvePending || approveConfirming || createPending || createConfirming;
+    if (inProgress) return; // only block while wallet prompt is open or tx is confirming
     setStep(0);
     setForm({
       token:              walletTokens[0]?.address ?? DEFAULT_TOKEN,
@@ -339,11 +340,20 @@ export default function CreateStreamModal() {
 
         {/* Header */}
         <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-border">
-          <div className="flex flex-col gap-2">
-            <h2 className="font-semibold text-base">
-              {step === 3 ? 'Stream created 🎉' : 'New stream'}
-            </h2>
-            {step < 3 && <StepDots current={step} total={3} />}
+          <div className="flex items-center gap-3">
+            {step > 0 && step < 3 && !(approvePending || approveConfirming || createPending || createConfirming) && (
+              <button
+                onClick={() => setStep(s => s - 1)}
+                className="text-muted hover:text-white w-7 h-7 flex items-center justify-center rounded-lg hover:bg-border transition-colors text-sm"
+                title="Back"
+              >←</button>
+            )}
+            <div className="flex flex-col gap-2">
+              <h2 className="font-semibold text-base">
+                {step === 3 ? 'Stream created 🎉' : 'New stream'}
+              </h2>
+              {step < 3 && <StepDots current={step} total={3} />}
+            </div>
           </div>
           <button onClick={handleClose} className="text-muted hover:text-white w-8 h-8 flex items-center justify-center rounded-lg hover:bg-border transition-colors text-xl">×</button>
         </div>
@@ -490,31 +500,6 @@ export default function CreateStreamModal() {
                   </div>
                 )}
               </div>
-
-              {totalCostDisplay && (
-                <div className="bg-accent/5 border border-accent/20 rounded-xl px-4 py-3 space-y-1.5 text-xs font-mono">
-                  {/* Total deposit — the number the company actually commits */}
-                  <div className="flex justify-between items-baseline">
-                    <span className="text-muted">Total deposit</span>
-                    <span className="text-accent font-bold text-base">{totalCostDisplay} {selectedToken.symbol}</span>
-                  </div>
-                  <div className="flex justify-between text-muted/60">
-                    <span>Per period</span>
-                    <span>{perMilestoneDisplay} {selectedToken.symbol} × {form.milestoneCount}</span>
-                  </div>
-                  <div className="flex justify-between text-muted/60">
-                    <span>Rate</span>
-                    <span>{formatUnits(ratePerSecond, decimals)}/sec · unlocks per verified period</span>
-                  </div>
-                  <div className="flex justify-between text-muted/60">
-                    <span>Contract length</span>
-                    <span>{WINDOW_OPTIONS.find(w => w.seconds.toString() === form.milestoneWindow)?.label} × {form.milestoneCount} periods</span>
-                  </div>
-                  <p className="text-muted/50 text-[10px] pt-0.5 border-t border-border leading-relaxed">
-                    Full amount deposited upfront · locked until agent verifies each period · no verification = stream stops · unearned funds return to you
-                  </p>
-                </div>
-              )}
 
               <button type="submit" disabled={!canConfigure}
                 className="btn-primary w-full disabled:opacity-40 disabled:cursor-not-allowed">
