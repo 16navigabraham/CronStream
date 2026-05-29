@@ -76,7 +76,7 @@ export async function getInstallationToken(installationId) {
 
     if (!res.ok) {
       const body = await res.text();
-      console.warn(`[githubApp] Could not mint installation token for ${installationId}: ${res.status} ${body.slice(0, 200)}`);
+      console.warn(`[githubApp] Could not mint installation token: ${res.status} ${body.slice(0, 200)}`);
       return null;
     }
 

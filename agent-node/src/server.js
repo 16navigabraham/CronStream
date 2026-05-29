@@ -224,7 +224,7 @@ app.get('/api/v1/auth/:provider/callback', async (req, res) => {
             args: [String(installationId), address.toLowerCase()],
           });
         }
-        console.log(`[oauth:github] ✓ App installed — installation_id=${installationId} for ${address.slice(0, 8)}…`);
+        console.log(`[oauth:github] ✓ App installed for ${address.slice(0, 8)}…`);
         break;
       }
 

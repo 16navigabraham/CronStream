@@ -104,10 +104,13 @@ function IntegrationsSection({ profile, refreshProfile }) {
       }
       setToast({ provider, status: 'disconnected' });
       setTimeout(() => setToast(null), 3000);
-      refreshProfile();
     } catch {
-      setToast({ provider, status: 'error', message: 'Disconnect failed' });
-      setTimeout(() => setToast(null), 4000);
+      // fetch threw (cold-start / network blip) — the server may have processed
+      // it anyway. Stay quiet and let the profile refresh reconcile the real state.
+    } finally {
+      // Re-fetch profile after a short delay so the button reflects the true
+      // server state regardless of whether the response reached the browser.
+      setTimeout(() => refreshProfile(), 800);
     }
   }, [authFetch, refreshProfile]);
 
