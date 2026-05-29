@@ -629,18 +629,48 @@ app.post('/api/v1/webhook/github', async (req, res, next) => { try {
     return res.json({ received: true, event, status: 'ignored' });
   }
 
-  // ── Fire verification for every stream registered to this repo ────────────
+  // ── Parse optional stream ID from commit message / PR body ──────────────
+  // Contractors can include "CronStream-Stream-Id: 0x<id>" in their commit
+  // message or PR description to route directly to their stream. This is the
+  // best practice when a repo has multiple active streams (e.g. two contractors
+  // on the same repo). Without it, the agent checks all streams for the repo.
+  let metaBody = '';
+  if (event === 'pull_request') {
+    metaBody = payload.pull_request?.body ?? '';
+  } else {
+    const headCommit = payload.head_commit ?? payload.commits?.[0];
+    metaBody = headCommit?.message ?? '';
+  }
+  const streamIdMatch = metaBody.match(/CronStream-Stream-Id:\s*(0x[a-fA-F0-9]{64})/i);
+  const hintedStreamId = streamIdMatch?.[1] ?? null;
+
+  // ── Fire verification ──────────────────────────────────────────────────────
   // checkStream re-reads on-chain state and re-verifies the work itself, then
   // extends only a pending / expiring / frozen stream — a stream with healthy
   // runway is left untouched, so frequent merges never stack runaway windows.
   // Runs async (fire-and-forget) so GitHub gets a fast 2xx within its timeout.
-  const registered = await getStreamsByRepo(repo);
-  if (!registered.length) {
+  let toVerify = [];
+
+  if (hintedStreamId) {
+    const row = await getStream(hintedStreamId);
+    if (row) {
+      console.log(`[webhook] Stream ID in commit — routing directly to ${hintedStreamId.slice(0, 10)}…`);
+      toVerify = [row];
+    } else {
+      console.warn(`[webhook] Hinted stream ${hintedStreamId.slice(0, 10)}… not in registry — falling back to repo lookup`);
+    }
+  }
+
+  if (!toVerify.length) {
+    toVerify = await getStreamsByRepo(repo);
+  }
+
+  if (!toVerify.length) {
     console.log(`[webhook] No streams registered for ${repo} — skipping`);
     return res.json({ received: true, event, status: 'skipped', reason: 'No streams registered for this repo' });
   }
 
-  for (const row of registered) {
+  for (const row of toVerify) {
     checkStream(row).catch(err =>
       console.error(`[webhook] Verification failed for ${row.stream_id?.slice(0, 10)}…: ${err.message}`),
     );
@@ -651,7 +681,7 @@ app.post('/api/v1/webhook/github', async (req, res, next) => { try {
     success:  true,
     event,
     status:   'verifying',
-    streams:  registered.map(r => r.stream_id),
+    streams:  toVerify.map(r => r.stream_id),
   });
 } catch (err) {
   console.error('[webhook] Unhandled error:', err);

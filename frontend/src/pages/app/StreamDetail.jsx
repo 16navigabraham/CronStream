@@ -439,9 +439,17 @@ export default function StreamDetail() {
                   />
                 )}
 
-                {/* Contractor: pending - tell them what to do */}
+                {/* Contractor: pending - tell them what to do + stream ID hint */}
                 {isRecipient && isPending && (
-                  <span className="text-xs text-yellow-400/80 font-mono">Push verified work to start earning</span>
+                  <div className="flex flex-col gap-2">
+                    <span className="text-xs text-yellow-400/80 font-mono">Push verified work to start earning</span>
+                    <div className="bg-dark border border-border rounded-xl px-3 py-2.5 text-left">
+                      <p className="text-[10px] text-muted uppercase tracking-wide mb-1.5">Include in your commit message or PR description</p>
+                      <code className="text-[11px] text-accent/90 font-mono break-all leading-relaxed select-all">
+                        CronStream-Stream-Id: {id}
+                      </code>
+                    </div>
+                  </div>
                 )}
 
                 {/* Sender: pending - reassure funds are safe */}
