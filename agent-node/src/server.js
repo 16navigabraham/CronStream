@@ -17,7 +17,7 @@ import rateLimit from 'express-rate-limit';
 import { verifyMilestone, VerificationError } from './verifyMilestone.js';
 import { signExtensionVoucher, getSignerAddress } from './agentSigner.js';
 import { submitExtension, getAllBalances, readStreamBatch }   from './chainSubmitter.js';
-import { initDb, isAlreadyProcessed, recordExtension, getExtensionCount, registerStream, getStream, getStreamsByRepo, getStreamsForAddress, getDb, upsertProfile, getProfile, getProfileByUsername, getProfileByApiKey, searchProfiles, isUsernameTaken, addToWaitlist, getWaitlistCount, saveOAuthTokens, disconnectOAuth } from './db.js';
+import { initDb, isAlreadyProcessed, recordExtension, getExtensionCount, registerStream, getStream, getStreamsByRepo, getStreamsForAddress, getDb, upsertProfile, getProfile, getProfileByUsername, getProfileByApiKey, searchProfiles, isUsernameTaken, addToWaitlist, getWaitlistCount, saveOAuthTokens, disconnectOAuth, saveRepoInstallation, removeRepoInstallation } from './db.js';
 import { publicProfile } from './encryption.js';
 import publicApiRouter        from './publicApi.js';
 import { startStreamListeners } from './streamListener.js';
@@ -591,6 +591,32 @@ app.post('/api/v1/webhook/github', async (req, res, next) => { try {
   }
 
   console.log(`[webhook] Received event: ${event} | action: ${payload.action}`);
+
+  // ── Installation lifecycle: map repos → installation so the agent can mint a
+  //    token for any repo it's installed on (company- OR contractor-owned). ──
+  if (event === 'installation' || event === 'installation_repositories') {
+    const installationId = payload.installation?.id;
+    const account        = payload.installation?.account?.login ?? null;
+    if (installationId) {
+      // Repos newly granted access (covers both event types)
+      const added = payload.repositories ?? payload.repositories_added ?? [];
+      for (const r of added) {
+        if (r.full_name) await saveRepoInstallation(r.full_name, installationId, account);
+      }
+      // Repos removed, or whole installation deleted
+      const removed = payload.repositories_removed ?? [];
+      for (const r of removed) {
+        if (r.full_name) await removeRepoInstallation(r.full_name);
+      }
+      if (payload.action === 'deleted' && payload.repositories) {
+        for (const r of payload.repositories) {
+          if (r.full_name) await removeRepoInstallation(r.full_name);
+        }
+      }
+      console.log(`[webhook] installation ${payload.action} — ${(added.length || 0)} repo(s) mapped for ${account ?? 'unknown'}`);
+    }
+    return res.json({ received: true, event, status: 'installation_synced' });
+  }
 
   // ── Normalise: merged PR or direct push to default branch ────────────────
   // Contractors who own the repo may push directly to main without opening a PR.

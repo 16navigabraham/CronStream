@@ -89,6 +89,13 @@ const SCHEMA = `
     company_name TEXT,
     created_at   INTEGER NOT NULL DEFAULT (unixepoch())
   );
+
+  CREATE TABLE IF NOT EXISTS repo_installations (
+    repo            TEXT    PRIMARY KEY,
+    installation_id TEXT    NOT NULL,
+    account         TEXT,
+    created_at      INTEGER NOT NULL DEFAULT (unixepoch())
+  );
 `;
 
 /**
@@ -589,6 +596,41 @@ export async function saveOAuthTokens(address, provider, { accessToken, refreshT
   args.push(address.toLowerCase());
 
   await db.execute({ sql: `UPDATE profiles SET ${sets.join(', ')} WHERE address = ?`, args });
+}
+
+// ─── GitHub App installation → repo mapping ───────────────────────────────────
+// A GitHub App installation can belong to EITHER the company or the contractor
+// (whoever owns the repo). We map repos to their installation so the agent can
+// always mint a token for any repo it's installed on, regardless of which
+// CronStream account triggered the install.
+
+export async function saveRepoInstallation(repo, installationId, account) {
+  const db = getDb();
+  if (!db) return;
+  await db.execute({
+    sql: `INSERT INTO repo_installations (repo, installation_id, account)
+          VALUES (?, ?, ?)
+          ON CONFLICT (repo) DO UPDATE SET
+            installation_id = excluded.installation_id,
+            account         = excluded.account`,
+    args: [repo.toLowerCase(), String(installationId), account ?? null],
+  });
+}
+
+export async function removeRepoInstallation(repo) {
+  const db = getDb();
+  if (!db) return;
+  await db.execute({ sql: 'DELETE FROM repo_installations WHERE repo = ?', args: [repo.toLowerCase()] });
+}
+
+export async function getInstallationIdForRepo(repo) {
+  const db = getDb();
+  if (!db || !repo) return null;
+  const result = await db.execute({
+    sql:  'SELECT installation_id FROM repo_installations WHERE repo = ? LIMIT 1',
+    args: [repo.toLowerCase()],
+  });
+  return result.rows[0]?.installation_id ?? null;
 }
 
 export async function disconnectOAuth(address, provider) {

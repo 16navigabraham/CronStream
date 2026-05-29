@@ -24,11 +24,12 @@
 
 import { Router }                       from 'express';
 import { paymentMiddleware }            from 'x402-express';
-import { verifyMilestone }              from './verifyMilestone.js';
+import { verifyMilestone, VerificationError } from './verifyMilestone.js';
 import { signExtensionVoucher,
          getSignerAddress }             from './agentSigner.js';
-import { getStream, getStreamsForAddress } from './db.js';
+import { getStream, getStreamsForAddress, getProfile, getInstallationIdForRepo } from './db.js';
 import { readStreamBatch }              from './chainSubmitter.js';
+import { getInstallationToken }         from './githubApp.js';
 
 const router = Router();
 
@@ -147,24 +148,42 @@ router.post('/verify-milestone', async (req, res) => {
     const nonce = Number(onChain.nonce);
 
     const source = verificationSource ?? streamRecord?.verification_source ?? 'github';
-    const target = verificationTarget ?? streamRecord?.verification_target;
+    const target = verificationTarget ?? streamRecord?.verification_target ?? streamRecord?.github_repo;
 
-    const verifyResult = await verifyMilestone({
-      streamId, contractorAddress, nonce,
-      verificationSource: source,
-      verificationTarget: target,
-      githubPayload,
-    });
-
-    if (!verifyResult.verified) {
-      return res.status(422).json({
-        success: false,
-        error:   verifyResult.reason ?? 'Milestone verification failed',
-      });
+    // Load the company's credentials (Jira/Bitbucket/Figma tokens) and resolve a
+    // GitHub App installation token by repo so private repos verify correctly.
+    let companyCredentials = null;
+    if (streamRecord?.sender) {
+      try { companyCredentials = await getProfile(streamRecord.sender); } catch { /* none */ }
+    }
+    let githubToken = null;
+    if (source === 'github' && target) {
+      const installationId = (await getInstallationIdForRepo(target))
+        ?? companyCredentials?.github_installation_id
+        ?? null;
+      if (installationId) githubToken = await getInstallationToken(installationId);
     }
 
-    // 7-day window; expiry gives 1 hour to submit the voucher on-chain
-    const extensionDurationSeconds = 7 * 24 * 60 * 60; // 604800
+    // verifyMilestone THROWS a VerificationError on failure; returns a summary on success.
+    let verifyResult;
+    try {
+      verifyResult = await verifyMilestone({
+        streamId, contractorAddress,
+        verificationSource: source,
+        verificationTarget: target,
+        githubPayload,
+        companyCredentials,
+        githubToken,
+      });
+    } catch (err) {
+      if (err instanceof VerificationError) {
+        return res.status(422).json({ success: false, error: err.message, failedLayer: err.layer });
+      }
+      throw err;
+    }
+
+    // Window length = the stream's configured period; expiry gives 1 hour to submit on-chain
+    const extensionDurationSeconds = Number(streamRecord?.period_seconds ?? 604800);
     const expiry = Math.floor(Date.now() / 1000) + 3600;
 
     const signature = await signExtensionVoucher({
@@ -174,7 +193,7 @@ router.post('/verify-milestone', async (req, res) => {
     });
 
     const voucher = { streamId, extensionDurationSeconds, expiry, signature };
-    return res.json({ success: true, voucher, nonce });
+    return res.json({ success: true, verification: verifyResult, voucher, nonce });
   } catch (err) {
     console.error('[publicApi:verify-milestone]', err);
     return res.status(500).json({ error: 'Verification error', detail: err.message });

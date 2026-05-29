@@ -12,7 +12,7 @@
  * Rule-based. No LLM. Deterministic.
  */
 
-import { getAllMonitoredStreams, getLastExtensionTime, isAlreadyProcessed, recordExtension, getProfile } from './db.js';
+import { getAllMonitoredStreams, getLastExtensionTime, isAlreadyProcessed, recordExtension, getProfile, getInstallationIdForRepo } from './db.js';
 import { readStreamBatch, submitExtension } from './chainSubmitter.js';
 import { signExtensionVoucher } from './agentSigner.js';
 import { getInstallationToken } from './githubApp.js';
@@ -351,9 +351,12 @@ async function checkStream(dbRow) {
   const src = (source ?? 'github').toLowerCase();
 
   if (src === 'github') {
-    const token = credentials?.github_installation_id
-      ? await getInstallationToken(credentials.github_installation_id)
-      : null;
+    // Resolve the installation by REPO (works whether the company or the
+    // contractor installed the app), falling back to the company profile.
+    const installationId = (await getInstallationIdForRepo(target))
+      ?? credentials?.github_installation_id
+      ?? null;
+    const token = installationId ? await getInstallationToken(installationId) : null;
     found = await pollGitHub(target, sinceTimestamp, token);
   } else if (src === 'jira') {
     found = await pollJira(target, credentials);
