@@ -133,8 +133,10 @@ export default function StreamDetail() {
   const { address }   = useAccount();
   const { authFetch } = useAuth();
 
-  const [showWithdraw, setShowWithdraw] = useState(false);
-  const [idCopied,     setIdCopied]     = useState(false);
+  const [showWithdraw,  setShowWithdraw]  = useState(false);
+  const [idCopied,      setIdCopied]      = useState(false);
+  const [agentStatus,   setAgentStatus]   = useState(null); // null | 'registered' | 'unregistered'
+  const [registering,   setRegistering]   = useState(false);
 
   const { sent, received, loading, refresh } = useStreams();
   const allStreams = [...sent, ...received];
@@ -186,6 +188,42 @@ export default function StreamDetail() {
   } = useWaitForTransactionReceipt({ hash: cancelHash });
 
   useEffect(() => { if (cancelSuccess) refresh?.(); }, [cancelSuccess]);
+
+  // Check if stream is registered with the agent. Runs once when stream loads.
+  // Shows a register button to the sender if it isn't.
+  useEffect(() => {
+    if (!stream || !id) return;
+    fetch(`${AGENT_URL}/api/v1/stream-status/${id}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => setAgentStatus(data?.stream ? 'registered' : 'unregistered'))
+      .catch(() => setAgentStatus(null));
+  }, [id, stream?.streamId]);
+
+  async function registerWithAgent() {
+    if (!stream) return;
+    setRegistering(true);
+    try {
+      const res = await authFetch(`${AGENT_URL}/api/v1/register-stream`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          streamId:                id,
+          verificationSource:      stream.verificationSource,
+          verificationTarget:      stream.verificationTarget,
+          recipient:               stream.recipient,
+          ratePerSecond:           stream.ratePerSecond?.toString(),
+          token:                   stream.token,
+          chainId:                 stream.chainId,
+          extensionDurationSeconds: stream.periodSeconds ?? 604800,
+        }),
+      });
+      setAgentStatus(res.ok ? 'registered' : 'unregistered');
+    } catch {
+      setAgentStatus('unregistered');
+    } finally {
+      setRegistering(false);
+    }
+  }
 
   // Live on-chain balance - enabled only when stream exists
   const { data: liveBalance } = useReadContract({
@@ -422,6 +460,22 @@ export default function StreamDetail() {
                   </p>
                   <p className="text-muted text-sm mt-2 font-mono">{tokenLabel}</p>
                 </>
+              )}
+
+              {/* ── Agent registration banner ─────────────────────────────── */}
+              {isSender && agentStatus === 'unregistered' && (
+                <div className="mt-5 bg-yellow-500/5 border border-yellow-500/20 rounded-xl px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-2 justify-between">
+                  <span className="text-xs text-yellow-400 font-mono">
+                    Stream not monitored - agent needs the verification details to watch for work.
+                  </span>
+                  <button
+                    onClick={registerWithAgent}
+                    disabled={registering}
+                    className="btn-outline text-xs py-1.5 px-3 shrink-0 disabled:opacity-50"
+                  >
+                    {registering ? 'Registering…' : 'Register with agent'}
+                  </button>
+                </div>
               )}
 
               {/* ── Actions ───────────────────────────────────────────────── */}

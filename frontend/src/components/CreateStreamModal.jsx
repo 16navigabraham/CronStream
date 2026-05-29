@@ -681,17 +681,8 @@ export default function CreateStreamModal() {
                 </div>
               )}
               {regStatus === 'failed' && (
-                <div className="text-xs font-mono bg-yellow-500/5 border border-yellow-500/30 rounded-xl px-4 py-3 w-full flex flex-col gap-2">
-                  <span className="text-yellow-400">
-                    Stream created on-chain, but the agent didn't register it. It won't be monitored until you retry.
-                  </span>
-                  <button
-                    onClick={retryRegister}
-                    disabled={regBusy}
-                    className="btn-outline py-1.5 text-xs self-start disabled:opacity-50"
-                  >
-                    {regBusy ? 'Retrying…' : 'Retry registration'}
-                  </button>
+                <div className="text-xs text-yellow-400 font-mono bg-yellow-500/5 border border-yellow-500/20 rounded-xl px-4 py-2 w-full">
+                  Agent registration pending - open the stream to retry if needed.
                 </div>
               )}
               {createTxHash && (
