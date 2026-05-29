@@ -130,9 +130,9 @@ async function verifyApiKey(req, res, next) {
 
 const _oauthStates = new Map(); // state → { address, expiry }
 
-function createOAuthState(address) {
+function createOAuthState(address, returnTo = '/app/profile') {
   const state = crypto.randomBytes(16).toString('hex');
-  _oauthStates.set(state, { address, expiry: Date.now() + 600_000 });
+  _oauthStates.set(state, { address, returnTo, expiry: Date.now() + 600_000 });
   return state;
 }
 
@@ -151,8 +151,9 @@ const AGENT_EXT_URL = (process.env.AGENT_EXTERNAL_URL ?? `http://localhost:${pro
 
 app.post('/api/v1/auth/:provider/initiate', verifyJwt, (req, res) => {
   const { provider } = req.params;
-  const address = req.callerAddress;
-  const state   = createOAuthState(address);
+  const address  = req.callerAddress;
+  const returnTo = req.body?.returnTo ?? '/app/profile';
+  const state    = createOAuthState(address, returnTo);
   const cb      = `${AGENT_EXT_URL}/api/v1/auth/${provider}/callback`;
 
   let redirectUrl;
@@ -187,19 +188,20 @@ app.post('/api/v1/auth/:provider/initiate', verifyJwt, (req, res) => {
 app.get('/api/v1/auth/:provider/callback', async (req, res) => {
   const { provider }         = req.params;
   const { code, state, error } = req.query;
-  const frontendReturn = `${FRONTEND_URL}/app/profile`;
-
   if (error) {
-    return res.redirect(`${frontendReturn}?oauth=${provider}&status=error&message=${encodeURIComponent(error)}`);
+    const errBase = `${FRONTEND_URL}/app/profile`;
+    return res.redirect(`${errBase}?oauth=${provider}&status=error&message=${encodeURIComponent(error)}`);
   }
 
   const session = consumeOAuthState(state);
   if (!session) {
-    return res.redirect(`${frontendReturn}?oauth=${provider}&status=error&message=Invalid+or+expired+state`);
+    const errBase = `${FRONTEND_URL}/app/profile`;
+    return res.redirect(`${errBase}?oauth=${provider}&status=error&message=Invalid+or+expired+state`);
   }
 
-  const { address } = session;
-  const cb = `${AGENT_EXT_URL}/api/v1/auth/${provider}/callback`;
+  const { address, returnTo = '/app/profile' } = session;
+  const cb             = `${AGENT_EXT_URL}/api/v1/auth/${provider}/callback`;
+  const frontendReturn = `${FRONTEND_URL}${returnTo}`;
 
   try {
     switch (provider) {

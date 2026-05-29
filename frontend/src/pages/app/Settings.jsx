@@ -79,7 +79,11 @@ function IntegrationsSection({ profile }) {
   const connect = useCallback(async (provider) => {
     setConnecting(provider);
     try {
-      const res  = await authFetch(`${AGENT_URL}/api/v1/auth/${provider}/initiate`, { method: 'POST' });
+      const res  = await authFetch(`${AGENT_URL}/api/v1/auth/${provider}/initiate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ returnTo: '/app/settings' }),
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? 'Failed to initiate');
       window.location.href = data.redirectUrl;
@@ -192,7 +196,7 @@ export default function Settings() {
   const navigate    = useNavigate();
   const { address } = useAccount();
   const { authFetch } = useAuth();
-  const { profile, saveProfile } = useProfile(address);
+  const { profile, saveProfile, synced } = useProfile(address);
   const { online, data: agentData } = useAgentStatus();
   const { sent, received } = useStreams();
 
@@ -213,10 +217,10 @@ export default function Settings() {
     farcaster: profile?.farcaster ?? '', website: profile?.website ?? '',
   };
 
-  // Redirect non-companies away
+  // Redirect non-companies away — wait for profile to finish loading first
   useEffect(() => {
-    if (profile && !isCompany) navigate('/app/profile', { replace: true });
-  }, [profile, isCompany]);
+    if (synced && profile && !isCompany) navigate('/app/profile', { replace: true });
+  }, [synced, profile, isCompany]);
 
   async function generateKey() {
     const chars  = 'abcdefghijklmnopqrstuvwxyz0123456789';
