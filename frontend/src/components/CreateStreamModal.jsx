@@ -189,7 +189,7 @@ export default function CreateStreamModal() {
   const { open, prefill, closeModal } = useCreateStream();
   const { address }   = useAccount();
   const { profile }   = useProfile(address);
-  const { authFetch } = useAuth();
+  const { authFetch, isAuthed, signIn } = useAuth();
   const publicClient  = usePublicClient();
   const chainId       = useChainId();
   const { tokens: walletTokens, isLoading: tokensLoading } = useWalletTokens(address, chainId);
@@ -634,26 +634,34 @@ export default function CreateStreamModal() {
               )}
 
               {/* Single CTA - approve then immediately create, or create directly if already approved */}
-              <button
-                onClick={() => {
-                  const args = [recipientAddr, form.token, ratePerSecond, 0n, totalCostRaw];
-                  createArgsRef.current = args;
-                  if (needsApproval) {
-                    doApprove({ address: form.token, abi: ERC20_ABI, functionName: 'approve', args: [getContractAddress(chainId), totalCostRaw] });
-                  } else {
-                    doCreate({ address: getContractAddress(chainId), abi: ROUTER_ABI, functionName: 'createStream', args });
-                  }
-                }}
-                disabled={!canCreate || approvePending || approveConfirming || createPending || (!!createTxHash && !createReceiptError && !createError)}
-                className="btn-primary w-full disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                {approvePending    ? 'Approve in wallet…'   :
-                 approveConfirming ? 'Approving…'           :
-                 createPending     ? 'Confirm in wallet…'   :
-                 (createTxHash && !createReceiptError && !createError) ? 'Creating stream…' :
-                 needsApproval     ? `Approve & deploy - ${totalCostDisplay} ${selectedToken.symbol}` :
-                                     `Deploy stream - ${totalCostDisplay} ${selectedToken.symbol}`}
-              </button>
+              {/* Gate on isAuthed - the JWT is required for post-create agent registration.
+                  If the session expired or sign was skipped, prompt re-sign before deploying. */}
+              {!isAuthed ? (
+                <button onClick={signIn} className="btn-primary w-full">
+                  Sign wallet to continue
+                </button>
+              ) : (
+                <button
+                  onClick={() => {
+                    const args = [recipientAddr, form.token, ratePerSecond, 0n, totalCostRaw];
+                    createArgsRef.current = args;
+                    if (needsApproval) {
+                      doApprove({ address: form.token, abi: ERC20_ABI, functionName: 'approve', args: [getContractAddress(chainId), totalCostRaw] });
+                    } else {
+                      doCreate({ address: getContractAddress(chainId), abi: ROUTER_ABI, functionName: 'createStream', args });
+                    }
+                  }}
+                  disabled={!canCreate || approvePending || approveConfirming || createPending || (!!createTxHash && !createReceiptError && !createError)}
+                  className="btn-primary w-full disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {approvePending    ? 'Approve in wallet…'   :
+                   approveConfirming ? 'Approving…'           :
+                   createPending     ? 'Confirm in wallet…'   :
+                   (createTxHash && !createReceiptError && !createError) ? 'Creating stream…' :
+                   needsApproval     ? `Approve & deploy - ${totalCostDisplay} ${selectedToken.symbol}` :
+                                       `Deploy stream - ${totalCostDisplay} ${selectedToken.symbol}`}
+                </button>
+              )}
             </div>
           )}
 

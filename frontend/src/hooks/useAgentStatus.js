@@ -58,9 +58,10 @@ export async function registerStreamWithAgent({
   chainId,
   authFetch,               // kept for API compat but not required - endpoint is open
 }) {
-  const url  = `${AGENT_URL}/api/v1/register-stream`;
+  const url    = `${AGENT_URL}/api/v1/register-stream`;
+  const _fetch = authFetch ?? fetch;
   try {
-    const res = await fetch(url, {
+    const res = await _fetch(url, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({
