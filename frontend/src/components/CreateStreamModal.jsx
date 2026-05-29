@@ -20,10 +20,9 @@ const ERC20_ABI = parseAbi([
 // Milestone window options - how long each validation window lasts before the stream
 // freezes if the agent hasn't verified a deliverable.
 const WINDOW_OPTIONS = [
-  { label: '24 hours', seconds: 86400n },
-  { label: '48 hours', seconds: 172800n },
   { label: '1 week',   seconds: 604800n },
   { label: '2 weeks',  seconds: 1209600n },
+  { label: '1 month',  seconds: 2592000n },
 ];
 
 // ─── Step dots ────────────────────────────────────────────────────────────────
@@ -212,7 +211,7 @@ export default function CreateStreamModal() {
     token:              DEFAULT_TOKEN,
     milestoneAmount:    '',          // value paid per milestone (e.g. 150 USDC)
     milestoneCount:     '3',         // number of milestones in the contract
-    milestoneWindow:    '86400',     // seconds per window - default 24h
+    milestoneWindow:    '604800',     // seconds per window - default 24h
     verificationSource: 'github',
     verificationTarget: '',
   });
@@ -275,7 +274,7 @@ export default function CreateStreamModal() {
       token:              walletTokens[0]?.address ?? DEFAULT_TOKEN,
       milestoneAmount:    '',
       milestoneCount:     '3',
-      milestoneWindow:    '86400',
+      milestoneWindow:    '604800',
       verificationSource: 'github',
       verificationTarget: '',
     });

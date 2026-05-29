@@ -17,8 +17,8 @@ import { readStreamBatch, submitExtension } from './chainSubmitter.js';
 import { signExtensionVoucher } from './agentSigner.js';
 import { VerificationError } from './verifyMilestone.js';
 
-const POLL_INTERVAL_MS  = 60 * 60 * 1000;  // run every hour
-const WARN_WINDOW_S     = 24 * 3600;        // check streams expiring within 24h
+const POLL_INTERVAL_MS  = 15 * 60 * 1000;  // run every 15 minutes
+const WARN_WINDOW_S     = 48 * 3600;        // check streams expiring within 48h
 const FROZEN_LOOKBACK_S = 7 * 24 * 3600;   // ignore streams frozen more than 7 days ago
 const GITHUB_API_BASE   = 'https://api.github.com';
 const EXCLUDED_EXTS     = ['.md', '.txt', '.mdx', '.rst'];
@@ -375,6 +375,6 @@ export function startMilestonePoller() {
     POLL_INTERVAL_MS,
   );
 
-  console.log(`[poller] Milestone poller started — checking every ${POLL_INTERVAL_MS / 60000} min`);
+  console.log(`[poller] Milestone poller started — checking every ${POLL_INTERVAL_MS / 60000} min, warning window ${WARN_WINDOW_S / 3600}h`);
   return timer;
 }

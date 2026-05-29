@@ -691,7 +691,12 @@ app.post('/api/v1/webhook/github', async (req, res, next) => { try {
     const onChain   = await readStreamBatch(registered.map(s => s.stream_id), chainId);
     for (let i = 0; i < registered.length; i++) {
       if (onChain[i]) {
-        streamsToProcess.push({ streamId: registered[i].stream_id, nonce: Number(onChain[i].nonce) });
+        streamsToProcess.push({
+          streamId:         registered[i].stream_id,
+          nonce:            Number(onChain[i].nonce),
+          streamValidUntil: Number(onChain[i].streamValidUntil ?? 0n),
+          startTime:        Number(onChain[i].startTime        ?? 0n),
+        });
       }
     }
     if (!streamsToProcess.length) {
@@ -701,7 +706,21 @@ app.post('/api/v1/webhook/github', async (req, res, next) => { try {
 
   // ── Process each stream ───────────────────────────────────────────────────
   const results = [];
-  for (const { streamId, nonce } of streamsToProcess) {
+  for (const { streamId, nonce, streamValidUntil = 0, startTime = 0 } of streamsToProcess) {
+    const nowSec   = Math.floor(Date.now() / 1000);
+    const isActive  = streamValidUntil > nowSec;
+    const isPending = streamValidUntil <= startTime && startTime > 0;
+
+    // Active stream mid-period — work is noted but extension is deferred.
+    // The poller will extend when the period nears its end, ensuring the
+    // contractor earns for the full configured period, not from the moment
+    // they first pushed.
+    if (isActive && !isPending) {
+      console.log(`[webhook] Stream ${streamId.slice(0, 10)}… is active until ${new Date(streamValidUntil * 1000).toISOString()} — deferring extension to period end`);
+      results.push({ streamId, status: 'deferred', reason: 'active — poller will extend at period end' });
+      continue;
+    }
+
     if (await isAlreadyProcessed(streamId, repo, eventRef)) {
       console.log(`[webhook] Already processed stream=${streamId} ref=${eventRef} — skipping`);
       results.push({ streamId, status: 'already_processed' });
