@@ -17,7 +17,9 @@ import { readStreamBatch, submitExtension } from './chainSubmitter.js';
 import { signExtensionVoucher } from './agentSigner.js';
 import { getInstallationToken } from './githubApp.js';
 
-const POLL_INTERVAL_MS  = 15 * 60 * 1000;  // run every 15 minutes
+// Poll cadence — override with POLL_INTERVAL_SECONDS for testing (e.g. 30).
+// Defaults to 15 min, which is fine for weekly/bi-weekly/monthly periods.
+const POLL_INTERVAL_MS  = Number(process.env.POLL_INTERVAL_SECONDS ?? 900) * 1000;
 const WARN_WINDOW_S     = 48 * 3600;        // check streams expiring within 48h
 const FROZEN_LOOKBACK_S = 7 * 24 * 3600;   // ignore streams frozen more than 7 days ago
 const GITHUB_API_BASE   = 'https://api.github.com';
