@@ -20,6 +20,37 @@ function short(addr, len = 6) {
   return addr ? `${addr.slice(0, len)}…${addr.slice(-4)}` : '—';
 }
 
+function verificationLink(source, target) {
+  if (!target) return null;
+  const src = (source ?? 'github').toLowerCase();
+  let href = null;
+  if (src === 'github')    href = `https://github.com/${target}`;
+  if (src === 'bitbucket') href = `https://bitbucket.org/${target}`;
+  if (src === 'figma')     href = target.startsWith('http') ? target : `https://figma.com/file/${target}`;
+  if (src === 'jira')      href = null; // no workspace URL available on stream
+  return href;
+}
+
+function VerificationLink({ source, target }) {
+  const label = target ?? source ?? 'GitHub';
+  const href  = verificationLink(source, target);
+  const src   = (source ?? 'github').toLowerCase();
+  const display = src.charAt(0).toUpperCase() + src.slice(1);
+
+  if (href) {
+    return (
+      <a href={href} target="_blank" rel="noopener noreferrer"
+        className="inline-flex items-center gap-1 text-accent hover:underline font-mono">
+        {display}{target ? ` · ${target}` : ''}
+        <ExternalLink size={10} className="shrink-0" />
+      </a>
+    );
+  }
+  return (
+    <span className="text-accent font-mono">{display}{target ? ` · ${target}` : ''}</span>
+  );
+}
+
 function useCopy(timeout = 1500) {
   const [copied, setCopied] = useState(false);
   function copy(val) {
@@ -338,18 +369,14 @@ export default function StreamDetail() {
                 <>
                   <p className="text-xs text-yellow-400/60 uppercase tracking-widest mb-3">Awaiting first payment</p>
                   <p className="text-sm text-muted font-mono leading-relaxed max-w-xs mx-auto">
-                    Submit work via <span className="text-white capitalize">{verificationSource ?? 'GitHub'}</span>
-                    {verificationTarget ? <span> · <span className="text-accent">{verificationTarget}</span></span> : null}
-                    {' '}to unlock your first period. The agent is watching - once it confirms your work, funds start streaming to you.
+                    Submit work via <VerificationLink source={verificationSource} target={verificationTarget} /> to unlock your first period. The agent is watching - once it confirms your work, funds start streaming to you.
                   </p>
                 </>
               ) : isPending && isSender ? (
                 <>
                   <p className="text-xs text-yellow-400/60 uppercase tracking-widest mb-3">Stream funded</p>
                   <p className="text-sm text-muted font-mono leading-relaxed max-w-xs mx-auto">
-                    {parseFloat(formatUnits(totalDeposited ?? 0n, 6)).toFixed(2)} {tokenLabel} is locked and safe. Agent is watching <span className="text-white capitalize">{verificationSource ?? 'GitHub'}</span>
-                    {verificationTarget ? <span> · <span className="text-accent">{verificationTarget}</span></span> : null}
-                    {' '}— funds release when the contractor pushes verified work.
+                    {parseFloat(formatUnits(totalDeposited ?? 0n, 6)).toFixed(2)} {tokenLabel} is locked and safe. Agent is watching <VerificationLink source={verificationSource} target={verificationTarget} /> - funds release when the contractor pushes verified work.
                   </p>
                 </>
               ) : (
