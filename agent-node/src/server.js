@@ -21,7 +21,7 @@ import { initDb, isAlreadyProcessed, recordExtension, getExtensionCount, registe
 import { publicProfile } from './encryption.js';
 import publicApiRouter        from './publicApi.js';
 import { startStreamListeners } from './streamListener.js';
-import { startMilestonePoller } from './milestonePoller.js';
+import { checkStream } from './verificationEngine.js';
 import { generateNonce, verifySiwe, issueJwt, verifyJwt, verifyJwtOrApiKey, verifyJwtOrApiKeyOrX402 } from './auth.js';
 
 const app = express();
@@ -517,23 +517,15 @@ app.post('/api/v1/verify-milestone', sensitiveLimit, devAuth(getProfileByApiKey)
 
 // ─── POST /api/v1/webhook/github ─────────────────────────────────────────────
 //
-// AUTONOMOUS endpoint — GitHub pushes events here directly.
-// On a merged PR with passing CI, the agent:
-//   1. Reads streamId + nonce from the PR description (via X-Stream-Id / X-Stream-Nonce headers or body)
-//   2. Runs 3-layer verification
-//   3. Signs the extension voucher
-//   4. Submits the tx on-chain itself
+// AUTONOMOUS endpoint — the GitHub App delivers events here directly.
+//   - installation / installation_repositories: map repos → installation_id so
+//     the agent can mint installation tokens for the API.
+//   - pull_request (merged) / push (default branch): look up every stream
+//     registered to the repo and hand each to the verification engine, which
+//     re-verifies the work and extends a pending / expiring / frozen stream.
 //
-// The company configures this webhook in their GitHub repo settings:
-//   Payload URL: https://<agent-host>/api/v1/webhook/github
-//   Content type: application/json
-//   Secret: matches GITHUB_WEBHOOK_SECRET in .env
-//   Events: Pull requests, Workflow runs
-//
-// CronStream convention: the company adds a PR description line:
-//   CronStream-Stream-Id: 0x<64 hex>
-//   CronStream-Nonce: <integer>
-// The agent parses these from the PR body to know which stream to extend.
+// No manual webhook setup or commit-message metadata is needed — installing the
+// GitHub App wires delivery automatically and streams are resolved by repo.
 
 app.post('/api/v1/webhook/github', async (req, res, next) => { try {
   // req.body is a raw Buffer when express.raw() ran (application/json content-type).
@@ -618,91 +610,49 @@ app.post('/api/v1/webhook/github', async (req, res, next) => { try {
     return res.json({ received: true, event, status: 'installation_synced' });
   }
 
-  // ── Normalise: merged PR or direct push to default branch ────────────────
-  // Contractors who own the repo may push directly to main without opening a PR.
-  // Both paths extract CronStream metadata and run the same verification flow.
-  let pr   = null;
-  let repo = payload.repository?.full_name ?? 'unknown';
-  let metaBody = '';
+  // ── Only act on a merged PR or a push to the default branch ───────────────
+  const repo = payload.repository?.full_name ?? 'unknown';
 
   if (event === 'pull_request') {
     if (payload.action !== 'closed' || payload.pull_request?.merged !== true) {
       return res.json({ received: true, event, status: 'ignored', action: payload.action });
     }
-    pr       = payload.pull_request;
-    metaBody = pr.body ?? '';
-    console.log(`[webhook] PR #${pr.number} merged into ${repo} — starting autonomous extension flow`);
+    console.log(`[webhook] PR #${payload.pull_request.number} merged into ${repo}`);
   } else if (event === 'push') {
-    // Only act on pushes to the default branch (refs/heads/main, refs/heads/master, etc.)
     const ref        = payload.ref ?? '';
     const defaultRef = `refs/heads/${payload.repository?.default_branch ?? 'main'}`;
     if (ref !== defaultRef) {
       return res.json({ received: true, event, status: 'ignored', reason: 'not default branch' });
     }
-    // Use the latest commit message as the metadata source
-    const headCommit = payload.head_commit ?? payload.commits?.[0];
-    metaBody = headCommit?.message ?? '';
-    console.log(`[webhook] Push to ${ref} on ${repo} — starting autonomous extension flow`);
+    console.log(`[webhook] Push to ${ref} on ${repo}`);
   } else {
     return res.json({ received: true, event, status: 'ignored' });
   }
 
-  // ── Parse CronStream metadata ─────────────────────────────────────────────
-  // Add these lines to the PR description OR commit message:
-  //   CronStream-Stream-Id: 0x<64hex>
-  //   CronStream-Nonce: <integer>
-  const streamIdMatch = metaBody.match(/CronStream-Stream-Id:\s*(0x[a-fA-F0-9]{64})/);
-  const nonceMatch    = metaBody.match(/CronStream-Nonce:\s*(\d+)/);
-
-  // eventRef — PR#N for pull_request events, commit SHA for push events
-  const prNumber = pr?.number ?? null;
-  const commitSha = event === 'push' ? (payload.head_commit?.id ?? payload.after) : null;
-  const eventRef  = prNumber != null ? `PR#${prNumber}` : (commitSha ?? 'unknown');
-
-  // ── Resolve stream: metadata in body takes precedence; otherwise auto-lookup by repo ──
-  let streamsToProcess = [];
-
-  if (streamIdMatch && nonceMatch) {
-    // Explicit metadata — single stream, caller-supplied nonce
-    streamsToProcess = [{ streamId: streamIdMatch[1], nonce: parseInt(nonceMatch[1], 10) }];
-  } else {
-    // Auto-lookup: find all streams registered for this repo and read nonce from chain
-    console.log(`[webhook] No CronStream metadata in message — auto-looking up streams for ${repo}`);
-    const registered = await getStreamsByRepo(repo);
-    if (!registered.length) {
-      console.log(`[webhook] No streams registered for ${repo} — skipping`);
-      return res.json({ received: true, event, status: 'skipped', reason: 'No streams registered for this repo' });
-    }
-    const chainId   = registered[0].chain_id;
-    const onChain   = await readStreamBatch(registered.map(s => s.stream_id), chainId);
-    for (let i = 0; i < registered.length; i++) {
-      if (onChain[i]) {
-        streamsToProcess.push({
-          streamId:         registered[i].stream_id,
-          nonce:            Number(onChain[i].nonce),
-          streamValidUntil: Number(onChain[i].streamValidUntil ?? 0n),
-          startTime:        Number(onChain[i].startTime        ?? 0n),
-        });
-      }
-    }
-    if (!streamsToProcess.length) {
-      return res.json({ received: true, event, status: 'skipped', reason: 'Could not read on-chain nonce for any registered stream' });
-    }
+  // ── Fire verification for every stream registered to this repo ────────────
+  // checkStream re-reads on-chain state and re-verifies the work itself, then
+  // extends only a pending / expiring / frozen stream — a stream with healthy
+  // runway is left untouched, so frequent merges never stack runaway windows.
+  // Runs async (fire-and-forget) so GitHub gets a fast 2xx within its timeout.
+  const registered = await getStreamsByRepo(repo);
+  if (!registered.length) {
+    console.log(`[webhook] No streams registered for ${repo} — skipping`);
+    return res.json({ received: true, event, status: 'skipped', reason: 'No streams registered for this repo' });
   }
 
-  // ── Acknowledge each stream ────────────────────────────────────────────────
-  // Pay-in-arrears model: the webhook never extends directly. A contractor must
-  // complete a FULL work-period before any payment is released. The milestone
-  // poller runs every 15 min, reads each stream's period_seconds + on-chain
-  // lastWindowStart, and extends only once a full period of verified work has
-  // elapsed. The webhook's job is just to confirm the event reached us — the
-  // poller owns all verification and extension timing.
-  const results = streamsToProcess.map(({ streamId }) => {
-    console.log(`[webhook] Event noted for stream ${streamId.slice(0, 10)}… — poller verifies at period end (arrears)`);
-    return { streamId, status: 'noted', reason: 'poller enforces period-end verification' };
-  });
+  for (const row of registered) {
+    checkStream(row).catch(err =>
+      console.error(`[webhook] Verification failed for ${row.stream_id?.slice(0, 10)}…: ${err.message}`),
+    );
+  }
 
-  return res.json({ received: true, success: true, results });
+  return res.json({
+    received: true,
+    success:  true,
+    event,
+    status:   'verifying',
+    streams:  registered.map(r => r.stream_id),
+  });
 } catch (err) {
   console.error('[webhook] Unhandled error:', err);
   return next(err);
@@ -1310,9 +1260,6 @@ try {
 startStreamListeners().catch(err =>
   console.warn('[listener] Failed to start stream listeners:', err.message),
 );
-
-// Start proactive milestone poller (non-blocking)
-startMilestonePoller();
 
 app.listen(PORT, async () => {
   console.log('═══════════════════════════════════════════════════');
