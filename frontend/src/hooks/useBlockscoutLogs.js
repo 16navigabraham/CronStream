@@ -2,11 +2,11 @@
  * useBlockscoutWithdrawals
  * ─────────────────────────
  * Fetches WithdrawalExecuted events for a recipient from the Blockscout API.
- * Only chains indexed by Blockscout are supported — callers should fall back
+ * Only chains indexed by Blockscout are supported - callers should fall back
  * to viem getLogs for unsupported chains (e.g. Robinhood Chain).
  *
  * Env:
- *   VITE_BLOCKSCOUT_API_KEY  — optional; Builder-plan key from dev.blockscout.com
+ *   VITE_BLOCKSCOUT_API_KEY  - optional; Builder-plan key from dev.blockscout.com
  *                              sent as ?apikey=<key> on every request
  */
 
@@ -14,7 +14,7 @@ import { useState, useEffect } from 'react';
 import { decodeAbiParameters, keccak256, toHex } from 'viem';
 
 // ─── Chain → Blockscout base URL ─────────────────────────────────────────────
-// Robinhood Chain (46630) is NOT indexed by Blockscout — omit intentionally.
+// Robinhood Chain (46630) is NOT indexed by Blockscout - omit intentionally.
 const BLOCKSCOUT_BASE = {
   421614: 'https://arbitrum-sepolia.blockscout.com',
 };
@@ -33,9 +33,9 @@ export function chainHasBlockscout(chainId) {
  * Fetch and decode WithdrawalExecuted logs for `address` on `chainId`.
  *
  * Returns:
- *   logs    — parsed log array (newest first), or null while loading
- *   loading — boolean
- *   error   — Error | null
+ *   logs    - parsed log array (newest first), or null while loading
+ *   loading - boolean
+ *   error   - Error | null
  *
  * Each log:
  *   { transactionHash, blockNumber, timestamp (ms), streamId, amount, protocolFee }
@@ -64,7 +64,7 @@ export function useBlockscoutWithdrawals({ address, chainId, contractAddress, en
         const allItems = [];
         let pageParams = null;
 
-        // Paginate up to 10 pages (500 logs max — more than enough for testnet)
+        // Paginate up to 10 pages (500 logs max - more than enough for testnet)
         for (let page = 0; page < 10; page++) {
           const qs = new URLSearchParams();
           if (apiKey) qs.set('apikey', apiKey);
@@ -93,7 +93,7 @@ export function useBlockscoutWithdrawals({ address, chainId, contractAddress, en
 
         if (cancelled) return;
 
-        // Decode each log — data = abi.encode(uint256 amount, uint256 protocolFee)
+        // Decode each log - data = abi.encode(uint256 amount, uint256 protocolFee)
         const parsed = allItems
           .map(item => {
             let amount = 0n, protocolFee = 0n;
@@ -102,12 +102,12 @@ export function useBlockscoutWithdrawals({ address, chainId, contractAddress, en
                 [{ type: 'uint256' }, { type: 'uint256' }],
                 item.data
               );
-            } catch { /* malformed — skip */ }
+            } catch { /* malformed - skip */ }
 
             return {
               transactionHash: item.tx_hash,
               blockNumber:     BigInt(item.block_number ?? 0),
-              // Real block timestamp from Blockscout — no approximation needed
+              // Real block timestamp from Blockscout - no approximation needed
               timestamp:       new Date(item.block_timestamp).getTime(),
               streamId:        item.topics?.[1] ?? null,
               amount,

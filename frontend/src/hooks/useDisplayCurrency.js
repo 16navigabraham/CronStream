@@ -15,7 +15,7 @@ import { formatCurrency, DEFAULT_CURRENCY, tokenUsdPrice } from '../lib/currenci
 import { formatUnits } from 'viem';
 
 /**
- * @param {string|null} preferredCurrency — from profile.display_currency
+ * @param {string|null} preferredCurrency - from profile.display_currency
  */
 export function useDisplayCurrency(preferredCurrency) {
   const currency = preferredCurrency || DEFAULT_CURRENCY;
@@ -28,9 +28,9 @@ export function useDisplayCurrency(preferredCurrency) {
 
   /**
    * Convert a raw BigInt token amount to a formatted display string.
-   * @param {bigint}  raw          — raw on-chain amount
-   * @param {number}  decimals     — token decimals (e.g. 6 for USDC)
-   * @param {string}  tokenAddress — to look up USD price
+   * @param {bigint}  raw          - raw on-chain amount
+   * @param {number}  decimals     - token decimals (e.g. 6 for USDC)
+   * @param {string}  tokenAddress - to look up USD price
    */
   const fmtToken = useMemo(() => (raw, decimals = 6, tokenAddress = null) => {
     const tokenAmount = parseFloat(formatUnits(raw ?? 0n, decimals));

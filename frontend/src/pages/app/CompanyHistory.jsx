@@ -1,5 +1,5 @@
 /**
- * Company Stream Payments — full history of all streams sent by this company.
+ * Company Stream Payments - full history of all streams sent by this company.
  * Single source of truth: one filtered table, no duplicate sections.
  */
 import { useState, useMemo } from 'react';
@@ -23,7 +23,7 @@ const TOKEN_LABELS = {
 };
 function tokenLabel(addr) { return TOKEN_LABELS[addr] ?? (addr ? addr.slice(0, 6) + '…' : '?'); }
 function short(addr, pre = 8, suf = 6) {
-  return addr ? `${addr.slice(0, pre)}…${addr.slice(-suf)}` : '—';
+  return addr ? `${addr.slice(0, pre)}…${addr.slice(-suf)}` : '-';
 }
 function tokenMeta(chainId, tokenAddress) {
   if (!tokenAddress) return { symbol: null, decimals: 6 };
@@ -35,11 +35,11 @@ function tokenMeta(chainId, tokenAddress) {
 
 // ─── Stream status (sender perspective) ──────────────────────────────────────
 //
-//  active        — window is open; agent can extend on milestone
-//  action        — expired, company has unearned funds to reclaim
-//  concluded     — expired, contractor earned payment (not yet withdrawn — their job)
-//  complete      — expired, contractor withdrew their earnings
-//  settled       — expired, no balance on either side
+//  active        - window is open; agent can extend on milestone
+//  action        - expired, company has unearned funds to reclaim
+//  concluded     - expired, contractor earned payment (not yet withdrawn - their job)
+//  complete      - expired, contractor withdrew their earnings
+//  settled       - expired, no balance on either side
 //
 function isPendingStream(stream) {
   const until = Number(stream.streamValidUntil ?? 0);
@@ -104,9 +104,9 @@ function StreamRow({ s, chainId, navigate }) {
 
   const endDate = s.streamValidUntil > 0n
     ? new Date(Number(s.streamValidUntil) * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
-    : '—';
+    : '-';
 
-  // Settlement column — what the company cares about financially
+  // Settlement column - what the company cares about financially
   let settlAmt   = null;
   let settlLabel = '';
   let settlSub   = '';
@@ -150,7 +150,7 @@ function StreamRow({ s, chainId, navigate }) {
       <div className="min-w-0">
         <div className="flex items-center gap-1.5">
           <p className="text-xs font-mono text-white/70 truncate">
-            {s.recipient ? short(s.recipient) : '—'}
+            {s.recipient ? short(s.recipient) : '-'}
           </p>
           {bsUrl && (
             <a href={bsUrl} target="_blank" rel="noopener noreferrer"
@@ -160,7 +160,7 @@ function StreamRow({ s, chainId, navigate }) {
           )}
         </div>
         <p className="text-[10px] text-muted font-mono mt-0.5 truncate">
-          {ratePerDay > 0 ? `${ratePerDay.toFixed(2)} ${sym ?? '?'}/day` : '—'}
+          {ratePerDay > 0 ? `${ratePerDay.toFixed(2)} ${sym ?? '?'}/day` : '-'}
           {' · '}
           {status === 'active' ? 'expires ' : 'ended '}
           {endDate}
@@ -170,7 +170,7 @@ function StreamRow({ s, chainId, navigate }) {
       {/* Deployed (hidden on mobile) */}
       <div className="hidden sm:block text-right shrink-0">
         <p className="text-xs font-mono tabular-nums text-white/50">
-          {deposited > 0n ? parseFloat(formatUnits(deposited, dec)).toFixed(2) : '—'}
+          {deposited > 0n ? parseFloat(formatUnits(deposited, dec)).toFixed(2) : '-'}
         </p>
         <p className="text-[10px] text-muted font-mono">{sym ?? '?'} deposited</p>
       </div>
@@ -225,7 +225,7 @@ export default function CompanyHistory() {
     refetchInterval: 30_000,
   });
 
-  // streams() reads — pull fresh streamValidUntil so activeCount is accurate
+  // streams() reads - pull fresh streamValidUntil so activeCount is accurate
   const stateCalls = useMemo(() => sent.map(s => ({
     address:      getContractAddress(streamChainId),
     abi:          ROUTER_ABI,
@@ -319,14 +319,14 @@ export default function CompanyHistory() {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
         <div className="stat-card">
           <div className="stat-value tabular-nums">
-            {symbol ? fmtCurrency(parseFloat(formatUnits(totalDeposited, decimals))) : '—'}
+            {symbol ? fmtCurrency(parseFloat(formatUnits(totalDeposited, decimals))) : '-'}
           </div>
           <div className="stat-label">Total Streams</div>
           <p className="text-[10px] text-muted font-mono mt-0.5">all streams</p>
         </div>
         <div className="stat-card">
           <div className="stat-value tabular-nums">
-            {symbol ? fmtCurrency(parseFloat(formatUnits(totalPaid, decimals))) : '—'}
+            {symbol ? fmtCurrency(parseFloat(formatUnits(totalPaid, decimals))) : '-'}
           </div>
           <div className="stat-label">Paid to contractors</div>
           <p className="text-[10px] text-muted font-mono mt-0.5">milestone earnings</p>
@@ -358,7 +358,7 @@ export default function CompanyHistory() {
       {/* ── Table ────────────────────────────────────────────────────────────── */}
       <div className="card p-0 overflow-hidden">
 
-        {/* Table header — filter tabs + column labels */}
+        {/* Table header - filter tabs + column labels */}
         <div className="border-b border-border">
           {/* Filter tabs */}
           <div className="flex items-center gap-0 overflow-x-auto px-4 pt-3">

@@ -245,13 +245,13 @@ export default function Profile() {
             )
           }
         >
-          {/* Role — read-only */}
+          {/* Role - read-only */}
           <div>
             <label className="label">Role</label>
             <div className="flex items-center gap-3 bg-dark border border-border rounded-xl px-4 py-3">
               <span className={`text-xs px-2.5 py-1 rounded-full border font-mono capitalize
                 ${isCompany ? 'border-accent/30 bg-accent/5 text-accent' : 'border-border text-muted'}`}>
-                {role || '—'}
+                {role || '-'}
               </span>
               <span className="text-xs text-muted">Set during setup · contact support to change</span>
             </div>

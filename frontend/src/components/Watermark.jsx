@@ -1,8 +1,8 @@
 /**
- * Watermark — tiled logo pattern stamped across an entire surface.
+ * Watermark - tiled logo pattern stamped across an entire surface.
  *
- * variant="page"  — fixed full-viewport overlay (AppShell, behind all content)
- * variant="modal" — absolute fill inside a modal panel (needs position:relative on parent)
+ * variant="page"  - fixed full-viewport overlay (AppShell, behind all content)
+ * variant="modal" - absolute fill inside a modal panel (needs position:relative on parent)
  */
 export default function Watermark({ variant = 'page' }) {
   const shared = {
@@ -28,7 +28,7 @@ export default function Watermark({ variant = 'page' }) {
     );
   }
 
-  // modal — sits inside the panel, clipped to its rounded corners, behind all content
+  // modal - sits inside the panel, clipped to its rounded corners, behind all content
   return (
     <div
       aria-hidden="true"

@@ -2,15 +2,15 @@
  * AuthContext
  *
  * Manages the SIWE session JWT for the connected wallet.
- * JWT is stored in sessionStorage — survives page refresh within the tab,
+ * JWT is stored in sessionStorage - survives page refresh within the tab,
  * cleared when the tab closes. Never written to localStorage.
  *
  * Exposes:
- *   token         — current JWT string, or null if not signed in
- *   isAuthed      — true when we have a non-expired JWT
- *   signIn()      — trigger SIWE sign flow (prompts wallet)
- *   signOut()     — clear the session
- *   authFetch()   — fetch() wrapper that injects Authorization header
+ *   token         - current JWT string, or null if not signed in
+ *   isAuthed      - true when we have a non-expired JWT
+ *   signIn()      - trigger SIWE sign flow (prompts wallet)
+ *   signOut()     - clear the session
+ *   authFetch()   - fetch() wrapper that injects Authorization header
  */
 
 import { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react';
@@ -75,10 +75,11 @@ export function AuthProvider({ children }) {
   }, [isConnected, address]);
 
   // Auto-sign the moment a wallet connects with no active session.
-  // This pops the wallet immediately — no modal required.
+  // Only fires inside /app/* routes - public pages (faucet, landing, etc.) don't need a JWT.
   const autoSignRef = useRef(false);
   useEffect(() => {
     if (!isConnected || !address || token) { autoSignRef.current = false; return; }
+    if (!window.location.pathname.startsWith('/app')) return;
     if (autoSignRef.current) return;
     autoSignRef.current = true;
     signIn();

@@ -105,7 +105,7 @@ function IntegrationsSection({ profile, refreshProfile }) {
       setToast({ provider, status: 'disconnected' });
       setTimeout(() => setToast(null), 3000);
     } catch {
-      // fetch threw (cold-start / network blip) — the server may have processed
+      // fetch threw (cold-start / network blip) - the server may have processed
       // it anyway. Stay quiet and let the profile refresh reconcile the real state.
     } finally {
       // Re-fetch profile after a short delay so the button reflects the true
@@ -226,7 +226,7 @@ export default function Settings() {
     farcaster: profile?.farcaster ?? '', website: profile?.website ?? '',
   };
 
-  // Redirect non-companies away — wait for profile to finish loading first
+  // Redirect non-companies away - wait for profile to finish loading first
   useEffect(() => {
     if (synced && profile && !isCompany) navigate('/app/profile', { replace: true });
   }, [synced, profile, isCompany]);
@@ -361,7 +361,7 @@ export default function Settings() {
             <div className="grid grid-cols-3 gap-3">
               {[
                 { label: 'Streams',    value: sent.length + received.length },
-                { label: 'Extensions', value: agentData?.extensionsServed ?? (online ? 0 : '—') },
+                { label: 'Extensions', value: agentData?.extensionsServed ?? (online ? 0 : '-') },
                 { label: 'Agent',      value: online === null ? '…' : online ? 'Online' : 'Offline', accent: online === true },
               ].map(({ label, value, accent }) => (
                 <div key={label} className="bg-dark border border-border rounded-xl px-4 py-3 text-center">

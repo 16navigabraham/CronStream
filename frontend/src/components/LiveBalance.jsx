@@ -4,26 +4,26 @@ import { formatUnits } from 'viem';
 import { getContractAddress, ROUTER_ABI } from '../lib/wagmi';
 
 /**
- * LiveBalance — ticks up in real-time using ratePerSecond interpolation.
+ * LiveBalance - ticks up in real-time using ratePerSecond interpolation.
  *
  * Two modes:
- *  1. Controlled  — parent passes `balance` (BigInt). LiveBalance uses it as the
+ *  1. Controlled  - parent passes `balance` (BigInt). LiveBalance uses it as the
  *     anchor and ticks from there. Internal useReadContract is disabled.
  *     Use this inside dashboards where the parent owns the on-chain reads via
  *     useContractReadsForChain (bypasses MetaMask chain-routing bugs).
  *
- *  2. Standalone  — no `balance` prop. LiveBalance fetches balanceOf itself via
+ *  2. Standalone  - no `balance` prop. LiveBalance fetches balanceOf itself via
  *     wagmi's useReadContract. Works when the wallet IS on the correct chain
  *     (e.g. StreamDetail page after we fixed it to read from the right chain).
  */
 export default function LiveBalance({
   streamId,
-  ratePerSecond,       // BigInt — rate per second
-  streamValidUntil,    // BigInt — unix timestamp
+  ratePerSecond,       // BigInt - rate per second
+  streamValidUntil,    // BigInt - unix timestamp
   decimals = 6,
   className = '',
   showTicker = true,
-  balance: controlledBalance = null,  // BigInt | null — if provided, skip internal read
+  balance: controlledBalance = null,  // BigInt | null - if provided, skip internal read
 }) {
   const chainId  = useChainId();
   const [display, setDisplay] = useState(null);
@@ -35,7 +35,7 @@ export default function LiveBalance({
   const nowSec    = BigInt(Math.floor(Date.now() / 1000));
   const isExpired = !streamValidUntil || nowSec >= streamValidUntil;
 
-  // ── Internal read — only fires when no controlled balance is provided ────────
+  // ── Internal read - only fires when no controlled balance is provided ────────
   const { data: onChainBalance } = useReadContract({
     address:      getContractAddress(chainId),
     abi:          ROUTER_ABI,
@@ -47,7 +47,7 @@ export default function LiveBalance({
     },
   });
 
-  // The effective balance — controlled prop wins over internal fetch.
+  // The effective balance - controlled prop wins over internal fetch.
   // Treat 0n as a valid balance (stream fully withdrawn), only skip if truly null/undefined.
   const effectiveBalance = (controlledBalance != null) ? controlledBalance : (onChainBalance ?? null);
 
@@ -60,7 +60,7 @@ export default function LiveBalance({
     };
   }, [effectiveBalance, decimals]);
 
-  // RAF loop — interpolates between anchors
+  // RAF loop - interpolates between anchors
   useEffect(() => {
     if (isExpired) {
       if (effectiveBalance != null) {
@@ -83,7 +83,7 @@ export default function LiveBalance({
     return () => cancelAnimationFrame(frameRef.current);
   }, [ratePerSecond, isExpired, decimals, effectiveBalance]);
 
-  if (display == null) return <span className={`text-muted font-mono ${className}`}>—</span>;
+  if (display == null) return <span className={`text-muted font-mono ${className}`}>-</span>;
 
   const formatted = display.toFixed(4);
   const [int, dec] = formatted.split('.');

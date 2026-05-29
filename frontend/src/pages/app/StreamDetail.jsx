@@ -22,7 +22,7 @@ const BLOCKSCOUT_ADDR = {
 };
 
 function short(addr, len = 6) {
-  return addr ? `${addr.slice(0, len)}…${addr.slice(-4)}` : '—';
+  return addr ? `${addr.slice(0, len)}…${addr.slice(-4)}` : '-';
 }
 
 function verificationLink(source, target) {
@@ -264,7 +264,7 @@ export default function StreamDetail() {
   // company gaming expiry to claw back funds the contractor legitimately earned.
   //
   // Frozen stream (was active, window lapsed): 7-day grace after streamValidUntil.
-  // Pending stream (never activated): 14-day grace after startTime — contractor
+  // Pending stream (never activated): 14-day grace after startTime - contractor
   // needs reasonable time to make their first verified push before funds are pulled.
   const FROZEN_GRACE_S  = 7  * 24 * 3600;
   const PENDING_GRACE_S = 14 * 24 * 3600;
@@ -434,7 +434,7 @@ export default function StreamDetail() {
                   </button>
                 )}
 
-                {/* Sender: period is verified and streaming — cancel is locked.
+                {/* Sender: period is verified and streaming - cancel is locked.
                     The contractor is guaranteed this period's pay. The company's
                     exit is at the period boundary via Reclaim, not mid-window. */}
                 {isSender && isActive && (
@@ -443,7 +443,7 @@ export default function StreamDetail() {
                   </span>
                 )}
 
-                {/* Sender: reclaim unearned — only after grace period */}
+                {/* Sender: reclaim unearned - only after grace period */}
                 {isSender && !isActive && !reclaimSuccess && !cancelSuccess && hasUnearned && (
                   reclaimReady ? (
                     <TxButton
@@ -489,12 +489,12 @@ export default function StreamDetail() {
                   <span className="text-xs text-yellow-400/80 font-mono">Waiting for contractor's first verified push</span>
                 )}
 
-                {/* Contractor: frozen but grace period still open — prompt them to withdraw */}
+                {/* Contractor: frozen but grace period still open - prompt them to withdraw */}
                 {isRecipient && !isActive && !isPending && resolvedBalance > 0n && !reclaimReady && (
                   <div className="flex flex-col items-center gap-1 text-center">
                     <span className="text-xs text-yellow-400/80 font-mono">Withdraw your earned balance</span>
                     <span className="text-[10px] text-muted/60">
-                      Company can reclaim unearned funds in {reclaimDaysLeft} day{reclaimDaysLeft !== 1 ? 's' : ''} — withdraw now
+                      Company can reclaim unearned funds in {reclaimDaysLeft} day{reclaimDaysLeft !== 1 ? 's' : ''} - withdraw now
                     </span>
                   </div>
                 )}
@@ -534,7 +534,7 @@ export default function StreamDetail() {
                   }}
                 />
               </div>
-              {/* Timestamps — pending shows only created date, active/ended shows start + end */}
+              {/* Timestamps - pending shows only created date, active/ended shows start + end */}
               {isPending ? (
                 <div className="text-xs text-muted/50 mt-2 font-mono">
                   Created {startTime > 0n ? new Date(Number(startTime) * 1000).toLocaleString() : '-'}

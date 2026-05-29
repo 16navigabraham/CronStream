@@ -1,5 +1,5 @@
 /**
- * FlowDiagram — animated "How it works" visualization.
+ * FlowDiagram - animated "How it works" visualization.
  *
  * Shows the 5-step CronStream flow as a canvas animation:
  *   Node circles connected by animated flowing lines.

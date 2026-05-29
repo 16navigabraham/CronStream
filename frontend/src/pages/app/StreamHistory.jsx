@@ -23,7 +23,7 @@ const TOKEN_LABELS = {
   '0x0000000000000000000000000000000000000002': 'AMZN',
 };
 function tokenLabel(addr) { return TOKEN_LABELS[addr] ?? (addr ? addr.slice(0, 6) + '…' : '?'); }
-function short(addr) { return addr ? `${addr.slice(0, 8)}…${addr.slice(-6)}` : '—'; }
+function short(addr) { return addr ? `${addr.slice(0, 8)}…${addr.slice(-6)}` : '-'; }
 
 function tokenMeta(chainId, tokenAddress) {
   if (!tokenAddress) return { symbol: null, decimals: 6 };
@@ -106,8 +106,8 @@ function StreamDetailModal({ stream, chainId, onClose }) {
           {row('Rate',            `${ratePerDay.toFixed(4)} ${symbol ?? ''}/day`, true)}
           {row('Total deposited', `${deposited.toFixed(4)} ${symbol ?? ''}`, true)}
           {row('Total received',  `${withdrawn.toFixed(4)} ${symbol ?? ''}`, true)}
-          {row('Started',  stream.startTime > 0n        ? new Date(Number(stream.startTime) * 1000).toLocaleString()        : '—')}
-          {row('Expired',  stream.streamValidUntil > 0n ? new Date(Number(stream.streamValidUntil) * 1000).toLocaleString() : '—')}
+          {row('Started',  stream.startTime > 0n        ? new Date(Number(stream.startTime) * 1000).toLocaleString()        : '-')}
+          {row('Expired',  stream.streamValidUntil > 0n ? new Date(Number(stream.streamValidUntil) * 1000).toLocaleString() : '-')}
         </div>
         <div className="px-5 pb-5 flex gap-2">
           <button onClick={onClose} className="flex-1 py-2.5 border border-border rounded-xl text-sm text-muted hover:text-white transition-colors">
@@ -257,7 +257,7 @@ export default function StreamHistory() {
               const withdrawn  = parseFloat(formatUnits(s.totalWithdrawn ?? 0n, dec));
               const expiredAt  = s.streamValidUntil > 0n
                 ? new Date(Number(s.streamValidUntil) * 1000).toLocaleDateString()
-                : '—';
+                : '-';
 
               return (
                 <div

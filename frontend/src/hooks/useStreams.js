@@ -6,7 +6,7 @@ import { getContractAddress, CONTRACT_ADDRESSES } from '../lib/wagmi';
 const AGENT_URL    = import.meta.env.VITE_AGENT_URL ?? 'http://localhost:3000';
 const BS_API_KEY   = import.meta.env.VITE_BLOCKSCOUT_API_KEY ?? '';
 
-// Blockscout base URLs — only chains indexed by Blockscout
+// Blockscout base URLs - only chains indexed by Blockscout
 const BLOCKSCOUT_BASE = {
   421614: 'https://arbitrum-sepolia.blockscout.com',
 };
@@ -58,17 +58,17 @@ function mapDbRow(r) {
 //
 // Multiple components (CompanyDashboard, ContractorDashboard, IncomeHistory,
 // StreamHistory, StreamDetail, Profile, etc.) all call useStreams() at the
-// same time. Without dedup each mount fires its own fetch — 8+ hits per page.
+// same time. Without dedup each mount fires its own fetch - 8+ hits per page.
 //
 // Solution:
-//   _inFlight  — all concurrent callers share the same Promise
-//   _memCache  — 18s TTL; subsequent polls within the window skip the network
-//   POLL_MS    — each hook instance polls every 20s, but since all callers share
+//   _inFlight  - all concurrent callers share the same Promise
+//   _memCache  - 18s TTL; subsequent polls within the window skip the network
+//   POLL_MS    - each hook instance polls every 20s, but since all callers share
 //                the cache only the first caller past the TTL makes a real request
 
 const _inFlight = new Map(); // address → Promise<{sent,received}|null>
 const _memCache = new Map(); // address → { sent, received, ts }
-const CACHE_MS  = 18_000;   // 18s — shorter than server's 30s so polls always land
+const CACHE_MS  = 18_000;   // 18s - shorter than server's 30s so polls always land
 const POLL_MS   = 20_000;   // background poll interval per hook instance
 
 /**
@@ -86,11 +86,11 @@ export function invalidateStreamsCache(address) {
 async function fetchFromAgent(address) {
   const key = address.toLowerCase();
 
-  // 1. Memory cache hit — skip network
+  // 1. Memory cache hit - skip network
   const hit = _memCache.get(key);
   if (hit && Date.now() - hit.ts < CACHE_MS) return hit;
 
-  // 2. Already in-flight — share the promise
+  // 2. Already in-flight - share the promise
   if (_inFlight.has(key)) return _inFlight.get(key);
 
   // 3. New request
@@ -195,9 +195,9 @@ async function fetchFromBlockscout(address, chainId) {
  * Fetches StreamCreated events for the connected wallet.
  *
  * Priority:
- *  1. Agent DB  — /api/v1/streams?address=0x...  (fast, no RPC limits)
- *  2. Blockscout — for Arb Sepolia (no block-range limits, indexes all history)
- *  3. viem getLogs fallback — for other chains, last ~7 days
+ *  1. Agent DB  - /api/v1/streams?address=0x...  (fast, no RPC limits)
+ *  2. Blockscout - for Arb Sepolia (no block-range limits, indexes all history)
+ *  3. viem getLogs fallback - for other chains, last ~7 days
  *
  * Background refresh:
  *  - Auto-polls every 20s; multiple callers share the same underlying fetch
@@ -240,7 +240,7 @@ export function useStreams() {
       return;
     }
 
-    // ── 2. Blockscout (Arb Sepolia — all history, no RPC limit) ───────────
+    // ── 2. Blockscout (Arb Sepolia - all history, no RPC limit) ───────────
     const bsResult = await fetchFromBlockscout(address, 421614);
     if (bsResult && (bsResult.sent.length > 0 || bsResult.received.length > 0)) {
       if (mountedRef.current) {
@@ -274,7 +274,7 @@ export function useStreams() {
     }
   }, [address, client, chainId]);
 
-  // Public refresh — busts cache and re-fetches immediately
+  // Public refresh - busts cache and re-fetches immediately
   const refresh = useCallback(() => load(true), [load]);
 
   // ── Initial load + background poll ──────────────────────────────────────
@@ -283,7 +283,7 @@ export function useStreams() {
 
     load();
 
-    // Background poll — multiple concurrent callers share the same fetch
+    // Background poll - multiple concurrent callers share the same fetch
     // via module-level cache, so there's no thundering herd.
     const timer = setInterval(() => load(true), POLL_MS);
     return () => clearInterval(timer);

@@ -169,7 +169,7 @@ export default function Withdraw() {
           const isActive  = row.streamValidUntil ? Number(row.streamValidUntil) > now : false;
           const senderShort = row.sender
             ? `${row.sender.slice(0, 6)}…${row.sender.slice(-4)}`
-            : '—';
+            : '-';
 
           return (
             <div
@@ -227,7 +227,7 @@ export default function Withdraw() {
       {/* Footer note */}
       {!loading && rows.length > 0 && (
         <p className="text-xs text-muted mt-4 font-mono">
-          Balances accrue in real time. Withdraw any amount at any time — no lock-up.
+          Balances accrue in real time. Withdraw any amount at any time - no lock-up.
         </p>
       )}
     </div>

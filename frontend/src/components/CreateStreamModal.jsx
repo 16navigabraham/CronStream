@@ -277,7 +277,7 @@ export default function CreateStreamModal() {
   const scheduleLabel    = scheduleOption.label;    // "Weekly" | "Bi-weekly" | "Monthly"
   const scheduleSubLabel = scheduleOption.sublabel; // "paid every week" …
 
-  // Duration field — label and hint adapt to the selected pay schedule so the
+  // Duration field - label and hint adapt to the selected pay schedule so the
   // number the company types always means what they expect.
   const durationConfig = {
     '604800':  { label: 'Duration (weeks)',   placeholder: '26', hint: n => `${n} wks = ~${Math.round(n / 4.33)} months` },
@@ -285,7 +285,7 @@ export default function CreateStreamModal() {
     '2592000': { label: 'No. of months',     placeholder: '6',  hint: n => `${n} months contract` },
   }[form.milestoneWindow] ?? { label: 'Duration', placeholder: '26', hint: () => '' };
 
-  // Calculated contract end date — shown live so company knows exactly when it runs out
+  // Calculated contract end date - shown live so company knows exactly when it runs out
   const contractEndDate = milestoneCountInt > 0 && windowSeconds > 0n
     ? new Date(Date.now() + Number(windowSeconds) * milestoneCountInt * 1000)
         .toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
@@ -317,7 +317,7 @@ export default function CreateStreamModal() {
     closeModal();
   }
 
-  // Allowance — only needed on step 2 (review/deploy)
+  // Allowance - only needed on step 2 (review/deploy)
   const { data: allowance, refetch: refetchAllowance } = useReadContract({
     address: form.token, abi: ERC20_ABI, functionName: 'allowance',
     args: [address, getContractAddress(chainId)],
@@ -329,7 +329,7 @@ export default function CreateStreamModal() {
   const { writeContract: doApprove, data: approveTxHash, isPending: approvePending, error: approveError } = useWriteContract();
   const { isLoading: approveConfirming, isSuccess: approveSuccess } = useWaitForTransactionReceipt({ hash: approveTxHash });
 
-  // After approval confirms, immediately pop wallet for create — no intermediate step.
+  // After approval confirms, immediately pop wallet for create - no intermediate step.
   // createArgsRef holds the args so we never read stale closure state here.
   useEffect(() => {
     if (!approveSuccess || !createArgsRef.current) return;
@@ -353,7 +353,7 @@ export default function CreateStreamModal() {
         setCreatedStreamId(decoded.streamId);
 
         // The stream now exists on-chain. Registering it with the agent is what
-        // makes it monitored — if this fails the stream is orphaned, so we track
+        // makes it monitored - if this fails the stream is orphaned, so we track
         // the result and offer a retry instead of silently swallowing it.
         const args = {
           streamId:                decoded.streamId,
@@ -395,7 +395,7 @@ export default function CreateStreamModal() {
   // Step 1 → 2: need all payment fields
   const canStep1 = !!form.milestoneAmount && ratePerSecond > 0n && milestoneCount >= 1n && !!form.token;
 
-  // Step 2 deploy: every field the agent needs — mirrors the server's required-field check
+  // Step 2 deploy: every field the agent needs - mirrors the server's required-field check
   const canCreate = canStep0 && canStep1 && !!chainId && windowSeconds > 0n;
 
   return (
@@ -533,7 +533,7 @@ export default function CreateStreamModal() {
                 <p className="text-[11px] text-muted">Fill rate and hours or type the agreed charge directly.</p>
               </div>
 
-              {/* Token + duration + pay schedule — 2-col on mobile, 3-col on sm+ */}
+              {/* Token + duration + pay schedule - 2-col on mobile, 3-col on sm+ */}
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="text-[10px] uppercase tracking-wide text-muted/60 mb-1.5 block">Currency</label>
@@ -617,13 +617,13 @@ export default function CreateStreamModal() {
               {needsApproval && (approvePending || approveConfirming) && (
                 <div className="text-xs text-muted font-mono bg-dark border border-border rounded-xl px-4 py-2.5 flex items-center gap-2">
                   <div className="w-3 h-3 border border-accent border-t-transparent rounded-full animate-spin shrink-0" />
-                  {approvePending ? 'Waiting for approval confirmation…' : 'Approval confirming — wallet will open for deposit next…'}
+                  {approvePending ? 'Waiting for approval confirmation…' : 'Approval confirming - wallet will open for deposit next…'}
                 </div>
               )}
 
               {ratePerSecond === 0n && (
                 <div className="text-xs text-yellow-400 font-mono bg-yellow-500/5 border border-yellow-500/20 rounded-xl px-4 py-2.5">
-                  Rate rounds to zero — increase the amount or use a shorter period.
+                  Rate rounds to zero - increase the amount or use a shorter period.
                 </div>
               )}
 
@@ -633,7 +633,7 @@ export default function CreateStreamModal() {
                 </div>
               )}
 
-              {/* Single CTA — approve then immediately create, or create directly if already approved */}
+              {/* Single CTA - approve then immediately create, or create directly if already approved */}
               <button
                 onClick={() => {
                   const args = [recipientAddr, form.token, ratePerSecond, 0n, totalCostRaw];
@@ -651,8 +651,8 @@ export default function CreateStreamModal() {
                  approveConfirming ? 'Approving…'           :
                  createPending     ? 'Confirm in wallet…'   :
                  (createTxHash && !createReceiptError && !createError) ? 'Creating stream…' :
-                 needsApproval     ? `Approve & deploy — ${totalCostDisplay} ${selectedToken.symbol}` :
-                                     `Deploy stream — ${totalCostDisplay} ${selectedToken.symbol}`}
+                 needsApproval     ? `Approve & deploy - ${totalCostDisplay} ${selectedToken.symbol}` :
+                                     `Deploy stream - ${totalCostDisplay} ${selectedToken.symbol}`}
               </button>
             </div>
           )}

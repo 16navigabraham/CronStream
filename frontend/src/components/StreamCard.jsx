@@ -14,7 +14,7 @@ const TOKEN_LABELS = {
 };
 
 function short(addr) {
-  return addr ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : '—';
+  return addr ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : '-';
 }
 
 function timeRemaining(until) {
@@ -29,17 +29,17 @@ function timeRemaining(until) {
 }
 
 /**
- * StreamCard — shows full stream info + live balance + contextual actions.
+ * StreamCard - shows full stream info + live balance + contextual actions.
  *
  * @param {object}  props
  * @param {string}  props.streamId
  * @param {'company'|'contractor'} props.role
  * @param {function} [props.onRefresh]
- * @param {number}  [props.chainId]  — stream's chain (from DB); falls back to wallet chain
- * @param {Array}   [props.streamData]    — pre-fetched tuple from parent batch read
- * @param {bigint}  [props.rawBalance]    — pre-fetched balanceOf result
- * @param {boolean} [props.batchManaged]  — true means parent owns the reads; skip internal useReadContract
- * @param {boolean} [props.batchLoading]  — true while parent batch fetch is still in-flight
+ * @param {number}  [props.chainId]  - stream's chain (from DB); falls back to wallet chain
+ * @param {Array}   [props.streamData]    - pre-fetched tuple from parent batch read
+ * @param {bigint}  [props.rawBalance]    - pre-fetched balanceOf result
+ * @param {boolean} [props.batchManaged]  - true means parent owns the reads; skip internal useReadContract
+ * @param {boolean} [props.batchLoading]  - true while parent batch fetch is still in-flight
  */
 export default function StreamCard({ streamId, role, onRefresh, chainId: propChainId, streamData, rawBalance: propRawBalance, batchManaged, batchLoading }) {
   const navigate      = useNavigate();
@@ -161,7 +161,7 @@ export default function StreamCard({ streamId, role, onRefresh, chainId: propCha
                 <span className="text-muted text-xs font-mono truncate">{short(counterpart)}</span>
               </div>
 
-              {/* Balance — mobile only (inline with status) */}
+              {/* Balance - mobile only (inline with status) */}
               <div className="sm:hidden flex items-center gap-1.5 shrink-0" onClick={e => e.stopPropagation()}>
                 <LiveBalance
                   streamId={streamId}
@@ -193,7 +193,7 @@ export default function StreamCard({ streamId, role, onRefresh, chainId: propCha
                   transformStyle: 'preserve-3d',
                 }}
               >
-                {/* Fill — top face */}
+                {/* Fill - top face */}
                 <div
                   style={{
                     position: 'absolute',
@@ -209,7 +209,7 @@ export default function StreamCard({ streamId, role, onRefresh, chainId: propCha
                     transition: 'width 0.8s cubic-bezier(0.4,0,0.2,1)',
                   }}
                 />
-                {/* Bottom extrusion shadow — gives depth illusion */}
+                {/* Bottom extrusion shadow - gives depth illusion */}
                 <div
                   style={{
                     position: 'absolute',
@@ -251,7 +251,7 @@ export default function StreamCard({ streamId, role, onRefresh, chainId: propCha
             `}</style>
           </div>
 
-          {/* Right: live balance — desktop only */}
+          {/* Right: live balance - desktop only */}
           <div className="hidden sm:block sm:text-right shrink-0" onClick={e => e.stopPropagation()}>
             <div className="text-xs text-muted uppercase tracking-widest mb-1">
               {role === 'contractor' ? 'Available' : 'Unearned'}
@@ -265,7 +265,7 @@ export default function StreamCard({ streamId, role, onRefresh, chainId: propCha
             />
             <div className="text-xs text-muted font-mono mt-0.5">{tokenLabel}</div>
 
-            {/* Action button — desktop */}
+            {/* Action button - desktop */}
             <div className="mt-3">
               {role === 'contractor' && (isActive || propRawBalance > 0n) && (
                 <button className="btn-primary py-1.5 px-4 text-xs"
@@ -284,7 +284,7 @@ export default function StreamCard({ streamId, role, onRefresh, chainId: propCha
             </div>
           </div>
 
-          {/* Action button — mobile only (below progress bar) */}
+          {/* Action button - mobile only (below progress bar) */}
           <div className="sm:hidden flex items-center justify-end gap-3 pt-3 pb-1" onClick={e => e.stopPropagation()}>
             {role === 'contractor' && (isActive || propRawBalance > 0n) && (
               <button className="btn-primary py-2 px-4 text-xs"

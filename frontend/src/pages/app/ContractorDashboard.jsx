@@ -52,7 +52,7 @@ function LiveNum({ raw, rate, decimals, className = '', size = 'xl', fmtCurrency
     return () => cancelAnimationFrame(raf.current);
   }, []);
 
-  if (val === null) return <span className={className}>—</span>;
+  if (val === null) return <span className={className}>-</span>;
 
   // If a currency formatter is provided, use it (multi-currency mode)
   if (fmtCurrency) {
@@ -351,7 +351,7 @@ export default function ContractorDashboard() {
 
   const streamIds = useMemo(() => received.map(s => s.streamId), [received]);
 
-  // ── balanceOf reads — server gives a snapshot; we refresh here so LiveBalance
+  // ── balanceOf reads - server gives a snapshot; we refresh here so LiveBalance
   //    has a fresh anchor. streams() data comes from the server already. ────────
   const balCalls = useMemo(() => received.map(s => ({
     address:      getContractAddress(streamChainId),
@@ -367,7 +367,7 @@ export default function ContractorDashboard() {
     refetchInterval: 8_000,
   });
 
-  // ── streams() reads — pull fresh streamValidUntil (and other state) from chain
+  // ── streams() reads - pull fresh streamValidUntil (and other state) from chain
   //    so "active" count is accurate even when Blockscout data lags. ─────────────
   const stateCalls = useMemo(() => received.map(s => ({
     address:      getContractAddress(streamChainId),
@@ -387,7 +387,7 @@ export default function ContractorDashboard() {
   const batchLoading = loading;
   const balData = balResults.length > 0 ? balResults : null;
 
-  // Enrich streams — balance from balResults, on-chain state from stateResults
+  // Enrich streams - balance from balResults, on-chain state from stateResults
   const enriched = useMemo(() =>
     received.map((s, i) => {
       const state = stateResults[i];
@@ -426,13 +426,13 @@ export default function ContractorDashboard() {
   const activeStreams  = enriched.filter(isStreamActive);
   const pendingStreams = enriched.filter(isStreamPending);
 
-  // Claimable from active streams only (don't include expired — those go to Income page)
+  // Claimable from active streams only (don't include expired - those go to Income page)
   const totalClaimable = activeStreams.reduce((s, e) => s + (e.rawBalance ?? 0n), 0n);
 
   // Only sum rate from actually-active streams so earning rate isn't inflated by expired ones
   const totalRate = activeStreams.reduce((s, e) => s + (e.ratePerSecond ?? 0n), 0n);
 
-  // Visible in the "current streams" list — active + pending
+  // Visible in the "current streams" list - active + pending
   const visibleStreams = [...activeStreams, ...pendingStreams];
 
   // Primary token (most common) for chart + display
@@ -492,18 +492,18 @@ export default function ContractorDashboard() {
         {/* Total received all-time */}
         <div className="stat-card">
           <div className="stat-value tabular-nums">
-            {primarySymbol ? fmtRaw(totalWithdrawn) : '—'}
+            {primarySymbol ? fmtRaw(totalWithdrawn) : '-'}
           </div>
           <div className="stat-label">Total received</div>
           <p className="text-[10px] text-muted font-mono mt-0.5">all time</p>
         </div>
 
-        {/* Claimable now — live tick */}
+        {/* Claimable now - live tick */}
         <div className="stat-card border-accent/20 bg-accent/[0.03]">
           <div className="stat-value text-accent tabular-nums">
             {primarySymbol
               ? <LiveNum raw={totalClaimable} rate={totalRate} decimals={primaryDecimals} fmtCurrency={fmtCurrency} />
-              : '—'}
+              : '-'}
           </div>
           <div className="stat-label">Claimable now</div>
           <p className="text-[10px] text-muted font-mono mt-0.5">pending</p>
@@ -514,7 +514,7 @@ export default function ContractorDashboard() {
           <div className="stat-value tabular-nums">
             {primarySymbol
               ? fmtCurrency(parseFloat(formatUnits(totalRate, primaryDecimals)) * 86400)
-              : '—'}
+              : '-'}
           </div>
           <div className="stat-label">Earning rate</div>
           <p className="text-[10px] text-muted font-mono mt-0.5">per day</p>

@@ -2,7 +2,7 @@ import { useState, useRef, useLayoutEffect, cloneElement } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 /**
- * LimelightNav — animated bottom nav bar with a glowing limelight indicator.
+ * LimelightNav - animated bottom nav bar with a glowing limelight indicator.
  * Adapted from the limelight-nav component to work with React Router NavLinks.
  */
 export function LimelightNav({ items = [], className = '' }) {

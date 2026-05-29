@@ -177,7 +177,7 @@ export default function CreateStream() {
         <h2 className="text-2xl font-bold mb-2">Stream is live</h2>
         <p className="text-muted text-sm mb-2 max-w-xs">
           {form.recipient.slice(0, 6)}…{form.recipient.slice(-4)} is earning{' '}
-          {parseFloat(form.ratePerDay).toFixed(2)} {selectedToken.symbol}/day — right now.
+          {parseFloat(form.ratePerDay).toFixed(2)} {selectedToken.symbol}/day - right now.
         </p>
         {form.githubRepo && (
           <p className="text-xs text-muted font-mono mb-6">
@@ -312,7 +312,7 @@ export default function CreateStream() {
                 <p className="text-muted text-sm leading-relaxed">
                   Allow CronStream to pull{' '}
                   <span className="font-mono text-white">{totalCostDisplay} {selectedToken.symbol}</span>{' '}
-                  from your wallet. This is a standard ERC-20 approval — you control the amount.
+                  from your wallet. This is a standard ERC-20 approval - you control the amount.
                 </p>
               </div>
             </div>

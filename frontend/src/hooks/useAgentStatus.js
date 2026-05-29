@@ -48,7 +48,7 @@ export function useAgentStatus() {
  */
 export async function registerStreamWithAgent({
   streamId,
-  repo,                    // legacy — kept for backwards compat
+  repo,                    // legacy - kept for backwards compat
   verificationSource,
   verificationTarget,
   recipient,

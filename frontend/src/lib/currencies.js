@@ -5,12 +5,12 @@
  * converted to the user's preferred display currency.
  *
  * Stablecoins are hardcoded at 1.00 USD.
- * Other ERC-20s would need a price feed — add to TOKEN_USD_PRICES as needed.
+ * Other ERC-20s would need a price feed - add to TOKEN_USD_PRICES as needed.
  */
 
 // All locales use 'en-US' number formatting so decimals are always displayed
 // with a period (25.79) not a comma (25,79). The comma convention is
-// continental-European (de-DE, fr-FR) — not British or American.
+// continental-European (de-DE, fr-FR) - not British or American.
 // Fintech apps consistently use period-as-decimal regardless of currency symbol.
 export const SUPPORTED_CURRENCIES = [
   { code: 'USD', symbol: '$',  name: 'US Dollar',        locale: 'en-US' },
@@ -35,7 +35,7 @@ export const DEFAULT_CURRENCY = 'USD';
 export const STABLECOIN_USD_PRICE = {
   // Arbitrum Sepolia USDC
   '0x75faf114eafb1bDbe2F0316DF893fd58CE46AA4d': 1.0,
-  // CronStream testnet token — 1 CRM = $1
+  // CronStream testnet token - 1 CRM = $1
   '0x2Ca6e6FbAA8D0Bc27a64Ca079aFa6bf5cc8C7ad1': 1.0,
 };
 
@@ -63,10 +63,10 @@ export function tokenUsdPrice(tokenAddress) {
 
 /**
  * Format a number in a given currency with proper locale formatting.
- * @param {number} usdAmount  — amount already converted to target currency
- * @param {string} currencyCode — e.g. 'USD', 'EUR'
+ * @param {number} usdAmount  - amount already converted to target currency
+ * @param {string} currencyCode - e.g. 'USD', 'EUR'
  * @param {object} options
- * @param {boolean} options.compact — use compact notation (1.2K, 3.4M)
+ * @param {boolean} options.compact - use compact notation (1.2K, 3.4M)
  */
 export function formatCurrency(amount, currencyCode = 'USD', { compact = false, decimals } = {}) {
   const meta = SUPPORTED_CURRENCIES.find(c => c.code === currencyCode) ?? SUPPORTED_CURRENCIES[0];

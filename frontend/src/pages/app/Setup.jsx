@@ -25,7 +25,7 @@ function UsernameField({ value, address, onChange }) {
           setStatus(available ? 'available' : 'taken');
         }
       } catch {
-        setStatus('idle'); // agent offline — allow continuing
+        setStatus('idle'); // agent offline - allow continuing
       }
     }, 500);
   }, [value, address]);
@@ -70,7 +70,7 @@ export default function Setup() {
     username: '', name: '', github: '', website: '',
   });
 
-  // If profile already exists redirect immediately — don't show the form
+  // If profile already exists redirect immediately - don't show the form
   useEffect(() => {
     if (synced && profile?.role) {
       navigate('/app/dashboard', { replace: true });
@@ -98,7 +98,7 @@ export default function Setup() {
 
   const isCompany = role === 'company';
 
-  // While waiting for server to confirm no existing profile — show nothing
+  // While waiting for server to confirm no existing profile - show nothing
   if (!synced) {
     return (
       <div className="min-h-screen flex items-center justify-center">

@@ -63,7 +63,7 @@ export function useExchangeRates() {
   /**
    * Convert a USD amount to another currency.
    * @param {number} usdAmount
-   * @param {string} toCurrency  — e.g. 'EUR', 'NGN'
+   * @param {string} toCurrency  - e.g. 'EUR', 'NGN'
    * @returns {number}
    */
   function convert(usdAmount, toCurrency = 'USD') {

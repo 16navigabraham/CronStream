@@ -2,7 +2,7 @@ import { Component } from 'react';
 import ErrorPage from '../pages/ErrorPage';
 
 /**
- * ErrorBoundary — wraps the whole app tree.
+ * ErrorBoundary - wraps the whole app tree.
  * Catches any unhandled render/lifecycle error and shows ErrorPage.
  */
 export default class ErrorBoundary extends Component {

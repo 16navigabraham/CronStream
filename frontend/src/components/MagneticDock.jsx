@@ -77,7 +77,7 @@ function DockIcon({ icon, label, href, onClick }) {
 }
 
 /**
- * MagneticDock — shows contractor social links as a macOS-style dock.
+ * MagneticDock - shows contractor social links as a macOS-style dock.
  * Pass in the profile object; only icons with data are rendered.
  */
 export default function MagneticDock({ profile }) {

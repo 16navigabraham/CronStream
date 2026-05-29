@@ -15,7 +15,7 @@ export const robinhoodTestnet = defineChain({
   testnet: true,
 });
 
-// Known test tokens per chain — added to the token picker alongside wallet-detected tokens.
+// Known test tokens per chain - added to the token picker alongside wallet-detected tokens.
 // CRM address is set via VITE_CRM_TOKEN_ADDRESS once deployed.
 export const KNOWN_TEST_TOKENS = {
   421614: [
@@ -29,7 +29,7 @@ export const KNOWN_TEST_TOKENS = {
   ],
 };
 
-// Contract addresses per chain — read from env vars, normalised to EIP-55 checksum.
+// Contract addresses per chain - read from env vars, normalised to EIP-55 checksum.
 // Set VITE_CONTRACT_ADDRESS_ARB_SEPOLIA and VITE_CONTRACT_ADDRESS_ROBINHOOD in .env
 export const CONTRACT_ADDRESSES = {
   421614: getAddress(import.meta.env.VITE_CONTRACT_ADDRESS_ARB_SEPOLIA ?? '0x5A141097BAF8D88f665217817A1f89e1663f0C16'),
@@ -41,12 +41,12 @@ export function getContractAddress(chainId) {
   return CONTRACT_ADDRESSES[chainId] ?? CONTRACT_ADDRESSES[421614];
 }
 
-// Legacy export — keeps any existing imports working, defaults to Arbitrum Sepolia
+// Legacy export - keeps any existing imports working, defaults to Arbitrum Sepolia
 export const CONTRACT_ADDRESS = CONTRACT_ADDRESSES[421614];
 
 // Pre-parsed with parseAbi so every consumer gets canonical ABI objects (not raw strings).
 // Viem's internal helpers (getAbiItem, encodeFunctionData, decodeErrorResult…) all expect
-// object arrays — passing raw strings can throw "Cannot use 'in' operator" TypeErrors.
+// object arrays - passing raw strings can throw "Cannot use 'in' operator" TypeErrors.
 export const ROUTER_ABI = parseAbi([
   // ── Functions ──────────────────────────────────────────────────────────────
   'function createStream(address recipient, address token, uint256 ratePerSecond, uint256 initialDurationSeconds, uint256 depositAmount) external returns (bytes32)',
@@ -62,7 +62,7 @@ export const ROUTER_ABI = parseAbi([
   'event WithdrawalExecuted(bytes32 indexed streamId, address indexed recipient, uint256 amount, uint256 protocolFee)',
   'event UnspentFundsReclaimed(bytes32 indexed streamId, address indexed sender, uint256 amount)',
   'event StreamExtended(bytes32 indexed streamId, uint256 newValidUntil, uint256 newNonce)',
-  // ── Custom errors — decoded by viem on revert so parseWriteError can name them ──
+  // ── Custom errors - decoded by viem on revert so parseWriteError can name them ──
   'error StreamDoesNotExist()',
   'error StreamAlreadyExists()',
   'error InvalidCryptographicSignature()',
@@ -82,12 +82,12 @@ export const wagmiConfig = getDefaultConfig({
   projectId:   import.meta.env.VITE_WALLETCONNECT_PROJECT_ID ?? 'cronstream',
   chains:      [arbitrumSepolia, robinhoodTestnet],
   transports:  {
-    // Arb Sepolia — use env RPC if set, else public fallback
+    // Arb Sepolia - use env RPC if set, else public fallback
     [arbitrumSepolia.id]: http(
       import.meta.env.VITE_ARB_SEPOLIA_RPC ?? 'https://sepolia-rollup.arbitrum.io/rpc',
       { timeout: 10_000 }
     ),
-    // Robinhood Chain — short timeout so SSL failures don't freeze the UI
+    // Robinhood Chain - short timeout so SSL failures don't freeze the UI
     [robinhoodTestnet.id]: http(
       import.meta.env.VITE_ROBINHOOD_RPC ?? 'https://rpc.testnet.chain.robinhood.com',
       { timeout: 5_000, retryCount: 1 }

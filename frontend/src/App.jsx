@@ -53,7 +53,7 @@ export default function App() {
       <Route path="/terms"   element={<Terms />} />
       <Route path="/p/:username" element={<PublicProfile />} />
 
-      {/* App — wallet required */}
+      {/* App - wallet required */}
       <Route path="/app" element={
         <ProtectedRoute>
           <AppShell />
@@ -62,7 +62,7 @@ export default function App() {
         <Route index                element={<Navigate to="/app/dashboard" replace />} />
         <Route path="setup"         element={<Setup />} />
         <Route path="dashboard"     element={<Dashboard />} />
-        {/* /app/stream/create now opens the modal — redirect to dashboard */}
+        {/* /app/stream/create now opens the modal - redirect to dashboard */}
         <Route path="stream/create" element={<Navigate to="/app/dashboard" replace />} />
         <Route path="stream/:id"    element={<StreamDetail />} />
         <Route path="withdraw"      element={<Navigate to="/app/dashboard" replace />} />
@@ -73,7 +73,7 @@ export default function App() {
         <Route path="settings"      element={<Settings />} />
       </Route>
 
-      {/* Dev preview only — remove before launch */}
+      {/* Dev preview only - remove before launch */}
       {import.meta.env.DEV && <Route path="/error-preview" element={<ErrorPage error={{ message: 'Example runtime crash: Cannot read properties of undefined' }} />} />}
 
       <Route path="*" element={<NotFound />} />

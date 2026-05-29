@@ -15,8 +15,8 @@ const CACHE_KEY = addr => `cronstream_profile_${addr?.toLowerCase()}`;
 const _inFlight      = new Map();  // address → Promise<serverProfile | null>
 const _memCache      = new Map();  // address → { profile, ts }
 const _listeners     = new Map();  // address → Set<(profile) => void>
-const _invalidatedAt = new Map();  // address → timestamp — stale fetch guard
-const MEM_TTL        = 30_000;     // 30 s — skip re-fetch if result is this fresh
+const _invalidatedAt = new Map();  // address → timestamp - stale fetch guard
+const MEM_TTL        = 30_000;     // 30 s - skip re-fetch if result is this fresh
 
 function notifyListeners(address, profile) {
   _listeners.get(address?.toLowerCase())?.forEach(fn => fn(profile));
@@ -25,16 +25,16 @@ function notifyListeners(address, profile) {
 function fetchFromServer(address) {
   const key = address.toLowerCase();
 
-  // 1. Memory cache hit — skip network
+  // 1. Memory cache hit - skip network
   const hit = _memCache.get(key);
   if (hit && Date.now() - hit.ts < MEM_TTL) {
     return Promise.resolve(hit.profile);
   }
 
-  // 2. Already in-flight — share the promise
+  // 2. Already in-flight - share the promise
   if (_inFlight.has(key)) return _inFlight.get(key);
 
-  // 3. New request — snapshot invalidation counter so stale responses can be discarded
+  // 3. New request - snapshot invalidation counter so stale responses can be discarded
   const snapshotTs = _invalidatedAt.get(key) ?? 0;
   const promise = fetch(`${AGENT_URL}/api/v1/profile/${address}`)
     .then(res => {
@@ -61,14 +61,14 @@ function invalidateCache(address) {
 }
 
 /**
- * useProfile — server-backed profile using the agent-node Turso DB.
+ * useProfile - server-backed profile using the agent-node Turso DB.
  *
  * Flow:
  *   1. Immediately load from localStorage cache (fast render, no flash)
- *   2. Fetch from server (deduplicated — shared across all concurrent callers)
+ *   2. Fetch from server (deduplicated - shared across all concurrent callers)
  *   3. saveProfile() POSTs to server + updates both caches
  *
- * Role is immutable after first save — the server enforces this.
+ * Role is immutable after first save - the server enforces this.
  */
 export function useProfile(address) {
   const [profile,  setProfile]  = useState(() => {
@@ -153,7 +153,7 @@ export function useProfile(address) {
       ...(data.apiKey !== undefined ? { apiKey: data.apiKey } : {}),
     };
 
-    // Optimistic local update — preserve has_api_key so Settings doesn't flicker
+    // Optimistic local update - preserve has_api_key so Settings doesn't flicker
     const optimistic = {
       ...payload,
       avatar: data.avatar,

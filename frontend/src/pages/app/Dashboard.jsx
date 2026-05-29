@@ -24,7 +24,7 @@ export default function Dashboard() {
   if (profile?.role === 'company')     return <CompanyDashboard />;
   if (profile?.role === 'contractor')  return <ContractorDashboard />;
 
-  // No profile yet — shouldn't normally reach here (Setup redirects first)
+  // No profile yet - shouldn't normally reach here (Setup redirects first)
   return (
     <div className="p-4 sm:p-6 flex flex-col items-center justify-center min-h-[60vh] text-center">
       <p className="text-muted mb-4">Complete your profile setup to continue.</p>

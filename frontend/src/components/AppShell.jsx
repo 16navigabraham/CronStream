@@ -184,7 +184,7 @@ export default function AppShell() {
 
         {/* Mobile top bar */}
         <header className="lg:hidden grid grid-cols-3 items-center px-4 py-3 border-b border-border bg-surface/80 backdrop-blur-md sticky top-0 z-20">
-          {/* Left — hamburger */}
+          {/* Left - hamburger */}
           <div className="flex items-center">
             <button
               onClick={() => setSidebarOpen(true)}
@@ -196,12 +196,12 @@ export default function AppShell() {
             </button>
           </div>
 
-          {/* Centre — logo always centred */}
+          {/* Centre - logo always centred */}
           <div className="flex items-center justify-center">
             <img src="/logo.png" alt="CronStream" className="h-7 w-7 object-contain rounded-md" />
           </div>
 
-          {/* Right — wallet */}
+          {/* Right - wallet */}
           <div className="flex items-center justify-end">
             <ConnectButton.Custom>
               {({ account, chain, openAccountModal, openChainModal, mounted }) => {
@@ -231,13 +231,13 @@ export default function AppShell() {
           <Outlet />
         </main>
 
-        {/* ── Mobile bottom tab bar — limelight ────────── */}
+        {/* ── Mobile bottom tab bar - limelight ────────── */}
         <div className="lg:hidden fixed bottom-0 left-0 right-0 z-20 bg-surface/95 backdrop-blur-md border-t border-border">
           <LimelightNav items={mobileNavItems} />
         </div>
       </div>
 
-      {/* Tiled page watermark — z-index 0, sits behind everything */}
+      {/* Tiled page watermark - z-index 0, sits behind everything */}
       <Watermark variant="page" />
 
       {/* Global modal */}

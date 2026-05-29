@@ -2,7 +2,7 @@
  * useContractReadsForChain
  * ─────────────────────────
  * Batch-reads multiple contract calls on a SPECIFIC chain using a viem public
- * client created directly — bypasses wagmi's connected-wallet chain context so
+ * client created directly - bypasses wagmi's connected-wallet chain context so
  * reads always hit the correct network regardless of MetaMask's selected chain.
  */
 
@@ -11,7 +11,7 @@ import { createPublicClient, http, parseAbi } from 'viem';
 import { arbitrumSepolia } from 'wagmi/chains';
 import { robinhoodTestnet } from '../lib/wagmi';
 
-// RPC URLs per chain — mirrors wagmi.js transports
+// RPC URLs per chain - mirrors wagmi.js transports
 const RPC_URLS = {
   421614: import.meta.env.VITE_ARB_SEPOLIA_RPC ?? 'https://sepolia-rollup.arbitrum.io/rpc',
   46630:  import.meta.env.VITE_ROBINHOOD_RPC   ?? 'https://rpc.testnet.chain.robinhood.com',
@@ -19,7 +19,7 @@ const RPC_URLS = {
 
 const VIEM_CHAINS = { 421614: arbitrumSepolia, 46630: robinhoodTestnet };
 
-// Module-level client cache — one client per chainId, created once
+// Module-level client cache - one client per chainId, created once
 const clientCache = {};
 function getClient(chainId) {
   if (clientCache[chainId]) return clientCache[chainId];
@@ -35,17 +35,17 @@ function getClient(chainId) {
 
 /**
  * @param {object}   params
- * @param {number}   params.chainId           — target chain for reads
- * @param {Array}    params.calls             — [{ address, abi, functionName, args }]
- * @param {boolean}  [params.enabled]         — false to skip (default true)
- * @param {number}   [params.refetchInterval] — ms between re-fetches (default 15000)
+ * @param {number}   params.chainId           - target chain for reads
+ * @param {Array}    params.calls             - [{ address, abi, functionName, args }]
+ * @param {boolean}  [params.enabled]         - false to skip (default true)
+ * @param {number}   [params.refetchInterval] - ms between re-fetches (default 15000)
  * @returns {Array}  one result per call (undefined for failed/pending reads)
  */
 export function useContractReadsForChain({ chainId, calls, enabled = true, refetchInterval = 15_000 }) {
   const [results, setResults] = useState([]);
 
-  // Stable string key — effect re-runs only when chain, enabled, or stream IDs change.
-  // Computed during render (not in a hook) — safe since it's a pure string computation.
+  // Stable string key - effect re-runs only when chain, enabled, or stream IDs change.
+  // Computed during render (not in a hook) - safe since it's a pure string computation.
   const callsKey = `${chainId}|${enabled}|${calls.map(c => String(c.args?.[0] ?? '')).join(',')}`;
 
   useEffect(() => {
@@ -60,7 +60,7 @@ export function useContractReadsForChain({ chainId, calls, enabled = true, refet
       return;
     }
 
-    // Use a closure-scoped flag — safe in StrictMode double-invoke and overlapping effects
+    // Use a closure-scoped flag - safe in StrictMode double-invoke and overlapping effects
     let cancelled = false;
 
     async function fetchAll() {
@@ -69,7 +69,7 @@ export function useContractReadsForChain({ chainId, calls, enabled = true, refet
           calls.map(c => {
             // viem's direct readContract needs a parsed Abi (array of objects).
             // wagmi hooks auto-parse human-readable strings, but we're calling
-            // viem directly here — so parse strings ourselves.
+            // viem directly here - so parse strings ourselves.
             const abi = Array.isArray(c.abi) && typeof c.abi[0] === 'string'
               ? parseAbi(c.abi)
               : c.abi;
@@ -83,7 +83,7 @@ export function useContractReadsForChain({ chainId, calls, enabled = true, refet
         );
         if (!cancelled) {
           const values = settled.map(r => (r.status === 'fulfilled' ? r.value : undefined));
-          // Dev-mode tracing — remove once cards are confirmed working
+          // Dev-mode tracing - remove once cards are confirmed working
           if (import.meta.env.DEV) {
             const fails = settled.filter(r => r.status === 'rejected');
             if (fails.length) console.warn('[useContractReadsForChain] chain=%d %d failed:', chainId, fails.length, fails.map(r => r.reason?.message));

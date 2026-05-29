@@ -1,11 +1,11 @@
 /**
- * LogoLoader — full-screen loading screen using the real CronStream icon.
+ * LogoLoader - full-screen loading screen using the real CronStream icon.
  *
  * Design:
  *   - cronstream.png (transparent background) centred with a teal glow pulse
  *   - Two SVG arcs spinning in opposite directions outside the icon
  *   - Three staggered stream bars below
- *   - Pure CSS animations — no canvas, no RAF loop
+ *   - Pure CSS animations - no canvas, no RAF loop
  */
 export default function LogoLoader({ label = 'Loading…' }) {
   return (
@@ -55,7 +55,7 @@ export default function LogoLoader({ label = 'Loading…' }) {
           pointerEvents:'none',
         }} />
 
-        {/* Outer arc — CW, slow */}
+        {/* Outer arc - CW, slow */}
         <svg viewBox="0 0 100 100" style={{
           position:  'absolute',
           inset:     0,
@@ -80,7 +80,7 @@ export default function LogoLoader({ label = 'Loading…' }) {
           />
         </svg>
 
-        {/* Inner arc — CCW, faster */}
+        {/* Inner arc - CCW, faster */}
         <svg viewBox="0 0 100 100" style={{
           position:  'absolute',
           inset:     10,
@@ -105,7 +105,7 @@ export default function LogoLoader({ label = 'Loading…' }) {
           />
         </svg>
 
-        {/* The actual icon — centred, transparent bg, pulsing glow */}
+        {/* The actual icon - centred, transparent bg, pulsing glow */}
         <img
           src="/cronstream.png"
           alt=""

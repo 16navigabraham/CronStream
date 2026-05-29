@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 
 /**
- * ErrorPage — shown by ErrorBoundary when something crashes at runtime.
+ * ErrorPage - shown by ErrorBoundary when something crashes at runtime.
  */
 export default function ErrorPage({ error, onReset }) {
   const navigate = useNavigate();
@@ -40,10 +40,10 @@ export default function ErrorPage({ error, onReset }) {
         The app hit an error
       </h1>
       <p className="text-sm text-muted max-w-sm leading-relaxed mb-6">
-        An unexpected error occurred. Your wallet and funds are safe — this is a UI issue only.
+        An unexpected error occurred. Your wallet and funds are safe - this is a UI issue only.
       </p>
 
-      {/* Error detail — collapsed */}
+      {/* Error detail - collapsed */}
       {error && (
         <details className="mb-6 w-full max-w-sm text-left">
           <summary className="text-xs text-muted font-mono cursor-pointer hover:text-white transition-colors select-none">

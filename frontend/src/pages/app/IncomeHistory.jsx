@@ -1,5 +1,5 @@
 /**
- * Income page — earnings overview, withdrawal chart, and claimable streams.
+ * Income page - earnings overview, withdrawal chart, and claimable streams.
  * Historical record of completed streams lives at /app/history.
  */
 import { useMemo, useState } from 'react';
@@ -32,7 +32,7 @@ const TOKEN_LABELS = {
   '0x0000000000000000000000000000000000000002': 'AMZN',
 };
 function tokenLabel(addr) { return TOKEN_LABELS[addr] ?? (addr ? addr.slice(0, 6) + '…' : '?'); }
-function short(addr) { return addr ? `${addr.slice(0, 8)}…${addr.slice(-6)}` : '—'; }
+function short(addr) { return addr ? `${addr.slice(0, 8)}…${addr.slice(-6)}` : '-'; }
 
 function tokenMeta(chainId, tokenAddress) {
   if (!tokenAddress) return { symbol: null, decimals: 6 };
@@ -209,7 +209,7 @@ export default function IncomePage() {
           <div>
             <p className="text-[10px] font-mono text-muted uppercase tracking-widest mb-1">Withdrawals</p>
             <div className="text-2xl font-mono font-bold tabular-nums">
-              {logsLoading ? '—' : fmtCurrency(chartTotal)}
+              {logsLoading ? '-' : fmtCurrency(chartTotal)}
             </div>
             <p className="text-xs text-muted mt-0.5">received · this {cfg.label.toLowerCase()}</p>
           </div>
@@ -269,11 +269,11 @@ export default function IncomePage() {
       {/* ── Stats ─────────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
         <StatCard label="Total earned" sub="withdrawn + claimable">
-          {symbol ? fmtCurrency(parseFloat(formatUnits(totalEarned, decimals))) : '—'}
+          {symbol ? fmtCurrency(parseFloat(formatUnits(totalEarned, decimals))) : '-'}
         </StatCard>
 
         <StatCard label="Claimable now" sub="pending" accent>
-          {symbol ? fmtCurrency(parseFloat(formatUnits(totalClaimable, decimals))) : '—'}
+          {symbol ? fmtCurrency(parseFloat(formatUnits(totalClaimable, decimals))) : '-'}
         </StatCard>
 
         <StatCard
@@ -282,7 +282,7 @@ export default function IncomePage() {
         >
           {symbol
             ? fmtCurrency(parseFloat(formatUnits(totalRate, decimals)) * 86400) + '/day'
-            : '—'}
+            : '-'}
         </StatCard>
 
         <StatCard label="Protocol fee" sub="per withdrawal">

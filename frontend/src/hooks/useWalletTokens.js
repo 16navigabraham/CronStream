@@ -33,7 +33,7 @@ export const CHAIN_TOKENS = {
       name:     'CronStream Token',
       address:  '0x2Ca6e6FbAA8D0Bc27a64Ca079aFa6bf5cc8C7ad1',
       decimals: 6,
-      logoUrl:  null,
+      logoUrl:  '/cronstream.png',
     },
     {
       symbol:   'WETH',
@@ -103,8 +103,8 @@ const ERC20_BALANCE_ABI = [
 ];
 
 /**
- * @param {string|undefined} walletAddress  — connected wallet (0x…)
- * @param {number}           chainId        — active chain
+ * @param {string|undefined} walletAddress  - connected wallet (0x…)
+ * @param {number}           chainId        - active chain
  * @returns {{ tokens: TokenWithBalance[], isLoading: boolean }}
  *
  * TokenWithBalance: { symbol, address, decimals, logoUrl, balance, balanceRaw, balanceFormatted }

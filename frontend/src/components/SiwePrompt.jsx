@@ -1,7 +1,7 @@
 /**
  * SiwePrompt
  *
- * No modal — the wallet pops automatically on connect (AuthContext).
+ * No modal - the wallet pops automatically on connect (AuthContext).
  * This component only renders a slim retry banner if the user rejected
  * the signature and is stuck without a session.
  */

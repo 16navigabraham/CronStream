@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 
 /**
- * RepoPicker — fetches repos from GitHub's public API using the
+ * RepoPicker - fetches repos from GitHub's public API using the
  * company's github handle (org or user), then lets them select.
  *
  * Falls back to a manual text input if:

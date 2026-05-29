@@ -348,7 +348,7 @@ export default function CompanyDashboard() {
           </p>
         </div>
         <div className="stat-card">
-          <div className="stat-value">{online ? (agentData?.extensionsServed ?? 0) : '—'}</div>
+          <div className="stat-value">{online ? (agentData?.extensionsServed ?? 0) : '-'}</div>
           <div className="stat-label">Extensions</div>
         </div>
         <div className="stat-card">

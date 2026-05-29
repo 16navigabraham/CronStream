@@ -1,12 +1,12 @@
 /**
- * StreamBackground — animated canvas background for the landing page hero.
+ * StreamBackground - animated canvas background for the landing page hero.
  *
  * Visualises CronStream's core concept:
- *   • Horizontal stream lanes — payment channels between company → contractor
- *   • Glowing particles with trails — tokens flowing per-second
- *   • Pulsing milestone nodes — verification checkpoints on each lane
- *   • Burst rings — fired when a particle passes through a node (milestone hit)
- *   • Faint vertical grid — structural depth
+ *   • Horizontal stream lanes - payment channels between company → contractor
+ *   • Glowing particles with trails - tokens flowing per-second
+ *   • Pulsing milestone nodes - verification checkpoints on each lane
+ *   • Burst rings - fired when a particle passes through a node (milestone hit)
+ *   • Faint vertical grid - structural depth
  */
 
 import { useEffect, useRef } from 'react';
@@ -155,7 +155,7 @@ export default function StreamBackground() {
         p.x += p.speed;
         if (p.x > W + 40) p.x = -40;
 
-        // collision check with nodes on same lane — with cooldown
+        // collision check with nodes on same lane - with cooldown
         nodes.forEach(node => {
           if (node.si !== p.si) return;
           if (Math.abs(p.x - node.x) < 10) {
