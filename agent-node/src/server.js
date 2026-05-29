@@ -58,7 +58,7 @@ app.use((req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin',   isWildcard ? '*' : requestOrigin);
     res.setHeader('Vary', 'Origin');
   }
-  res.setHeader('Access-Control-Allow-Methods',  'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods',  'GET, POST, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers',  'Content-Type, Authorization, X-PAYMENT, X-Payment-Response');
   res.setHeader('Access-Control-Expose-Headers', 'X-Payment-Response, X-Payment-Requirements');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
