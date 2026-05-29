@@ -84,6 +84,7 @@ export default function Setup() {
   async function handleSubmit(e) {
     e.preventDefault();
     if (!role || !form.name || !form.username) return;
+    if (role === 'contractor' && !form.github.trim()) return;
     setLoading(true);
     setError(null);
     const result = await saveProfile({ role, ...form });
@@ -164,18 +165,19 @@ export default function Setup() {
 
             {!isCompany && (
               <div>
-                <label className="label">GitHub username</label>
+                <label className="label">GitHub username <span className="text-muted/50 normal-case tracking-normal font-normal">(required)</span></label>
                 <div className="relative">
                   <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted font-mono text-sm select-none">github.com/</span>
                   <input
                     name="github"
                     value={form.github}
-                    onChange={handleChange}
+                    onChange={e => setForm(f => ({ ...f, github: e.target.value.trim().replace(/^@/, '').replace(/^https?:\/\/github\.com\//i, '').replace(/^github\.com\//i, '') }))}
                     placeholder="alexj"
                     className="input pl-[7.5rem]"
+                    required
                   />
                 </div>
-                <p className="text-xs text-muted mt-1">Shown on your public contractor profile so companies can find you.</p>
+                <p className="text-xs text-muted mt-1">The agent verifies work by this handle, so only your own commits and PRs release payment. Also shown on your public profile.</p>
               </div>
             )}
 
@@ -208,7 +210,7 @@ export default function Setup() {
 
             <button
               type="submit"
-              disabled={loading || !form.name || !form.username}
+              disabled={loading || !form.name || !form.username || (role === 'contractor' && !form.github.trim())}
               className="btn-primary w-full disabled:opacity-40 disabled:cursor-not-allowed mt-1"
             >
               {loading ? 'Setting up…' : 'Continue to Dashboard →'}
