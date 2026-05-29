@@ -257,6 +257,24 @@ export default function StreamDetail() {
   const isRecipient  = address?.toLowerCase() === recipient?.toLowerCase();
   const isSender     = address?.toLowerCase() === sender?.toLowerCase();
 
+  // ── Reclaim grace period ────────────────────────────────────────────────────
+  // Companies cannot reclaim immediately after a stream freezes. A grace period
+  // gives the contractor time to withdraw earned funds and protects against a
+  // company gaming expiry to claw back funds the contractor legitimately earned.
+  //
+  // Frozen stream (was active, window lapsed): 7-day grace after streamValidUntil.
+  // Pending stream (never activated): 14-day grace after startTime — contractor
+  // needs reasonable time to make their first verified push before funds are pulled.
+  const FROZEN_GRACE_S  = 7  * 24 * 3600;
+  const PENDING_GRACE_S = 14 * 24 * 3600;
+  const nowSec = Math.floor(Date.now() / 1000);
+  const reclaimAvailableAt = isPending
+    ? Number(startTime ?? 0n) + PENDING_GRACE_S
+    : Number(streamValidUntil ?? 0n) + FROZEN_GRACE_S;
+  const reclaimReady       = nowSec >= reclaimAvailableAt;
+  const reclaimSecsLeft    = Math.max(0, reclaimAvailableAt - nowSec);
+  const reclaimDaysLeft    = Math.ceil(reclaimSecsLeft / 86400);
+
   // Live balance - prefer fresh on-chain read; fall back to server-cached rawBalance
   const resolvedBalance = liveBalance ?? rawBalance ?? 0n;
 
@@ -424,19 +442,32 @@ export default function StreamDetail() {
                   </span>
                 )}
 
-                {/* Sender: reclaim unearned after expiry - only if there IS unearned and not pending */}
-                {isSender && !isActive && !isPending && !reclaimSuccess && !cancelSuccess && hasUnearned && (
-                  <TxButton
-                    label="Reclaim unearned"
-                    pendingLabel="Confirm in wallet…"
-                    confirmingLabel="Reclaiming…"
-                    successLabel="✓ Reclaimed"
-                    className="btn-outline"
-                    onWrite={() => { reclaimReset(); handleReclaim(); }}
-                    isPending={reclaimPending}
-                    isConfirming={reclaimConfirming}
-                    isSuccess={reclaimSuccess}
-                  />
+                {/* Sender: reclaim unearned — only after grace period */}
+                {isSender && !isActive && !reclaimSuccess && !cancelSuccess && hasUnearned && (
+                  reclaimReady ? (
+                    <TxButton
+                      label="Reclaim unearned"
+                      pendingLabel="Confirm in wallet…"
+                      confirmingLabel="Reclaiming…"
+                      successLabel="✓ Reclaimed"
+                      className="btn-outline"
+                      onWrite={() => { reclaimReset(); handleReclaim(); }}
+                      isPending={reclaimPending}
+                      isConfirming={reclaimConfirming}
+                      isSuccess={reclaimSuccess}
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center gap-1 text-center">
+                      <span className="text-xs text-muted font-mono">
+                        Reclaim available in {reclaimDaysLeft} day{reclaimDaysLeft !== 1 ? 's' : ''}
+                      </span>
+                      <span className="text-[10px] text-muted/60">
+                        {isPending
+                          ? 'Contractor has time to push their first verified commit'
+                          : 'Contractor has time to withdraw their earned balance'}
+                      </span>
+                    </div>
+                  )
                 )}
 
                 {/* Contractor: pending - tell them what to do + stream ID hint */}
@@ -455,6 +486,16 @@ export default function StreamDetail() {
                 {/* Sender: pending - reassure funds are safe */}
                 {isSender && isPending && (
                   <span className="text-xs text-yellow-400/80 font-mono">Waiting for contractor's first verified push</span>
+                )}
+
+                {/* Contractor: frozen but grace period still open — prompt them to withdraw */}
+                {isRecipient && !isActive && !isPending && resolvedBalance > 0n && !reclaimReady && (
+                  <div className="flex flex-col items-center gap-1 text-center">
+                    <span className="text-xs text-yellow-400/80 font-mono">Withdraw your earned balance</span>
+                    <span className="text-[10px] text-muted/60">
+                      Company can reclaim unearned funds in {reclaimDaysLeft} day{reclaimDaysLeft !== 1 ? 's' : ''} — withdraw now
+                    </span>
+                  </div>
                 )}
 
                 {/* Sender: info when nothing left to reclaim */}

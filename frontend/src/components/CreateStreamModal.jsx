@@ -20,9 +20,9 @@ const ERC20_ABI = parseAbi([
 // Milestone window options - how long each validation window lasts before the stream
 // freezes if the agent hasn't verified a deliverable.
 const WINDOW_OPTIONS = [
-  { label: '1 week',   seconds: 604800n },
-  { label: '2 weeks',  seconds: 1209600n },
-  { label: '1 month',  seconds: 2592000n },
+  { label: 'Weekly',     sublabel: 'paid every week',       seconds: 604800n },
+  { label: 'Bi-weekly',  sublabel: 'paid every 2 weeks',    seconds: 1209600n },
+  { label: 'Monthly',    sublabel: 'paid once a month',     seconds: 2592000n },
 ];
 
 // ─── Step dots ────────────────────────────────────────────────────────────────
@@ -201,6 +201,9 @@ export default function CreateStreamModal() {
   const [regArgs,         setRegArgs]         = useState(null);   // cached payload for retry
   const [regBusy,         setRegBusy]         = useState(false);
 
+  // Cached create args so the approve→create chain never reads stale closure values
+  const createArgsRef = useRef(null);
+
   const VERIFICATION_SOURCES = [
     { key: 'github',    label: 'GitHub',    placeholder: 'owner/repo',                         hint: 'Merged PRs + passing CI' },
     { key: 'jira',      label: 'Jira',      placeholder: 'https://acme.atlassian.net / ABC',    hint: 'Ticket moved to Done' },
@@ -268,6 +271,26 @@ export default function CreateStreamModal() {
   const totalCostDisplay = totalCostRaw > 0n
     ? totalCostFloat.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     : null;
+
+  // Human-readable pay schedule label derived from the selected cadence
+  const scheduleOption   = WINDOW_OPTIONS.find(w => w.seconds.toString() === form.milestoneWindow) ?? WINDOW_OPTIONS[0];
+  const scheduleLabel    = scheduleOption.label;    // "Weekly" | "Bi-weekly" | "Monthly"
+  const scheduleSubLabel = scheduleOption.sublabel; // "paid every week" …
+
+  // Duration field — label and hint adapt to the selected pay schedule so the
+  // number the company types always means what they expect.
+  const durationConfig = {
+    '604800':  { label: 'Duration (weeks)',   placeholder: '26', hint: n => `${n} wks = ~${Math.round(n / 4.33)} months` },
+    '1209600': { label: 'No. of payments',   placeholder: '13', hint: n => `${n} payments = ~${Math.round(n * 2)} weeks` },
+    '2592000': { label: 'No. of months',     placeholder: '6',  hint: n => `${n} months contract` },
+  }[form.milestoneWindow] ?? { label: 'Duration', placeholder: '26', hint: () => '' };
+
+  // Calculated contract end date — shown live so company knows exactly when it runs out
+  const contractEndDate = milestoneCountInt > 0 && windowSeconds > 0n
+    ? new Date(Date.now() + Number(windowSeconds) * milestoneCountInt * 1000)
+        .toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    : null;
+
   // Show the amount the user typed as per-period - ceiling rounding is absorbed into the total deposit
   const perMilestoneDisplay = form.milestoneAmount
     ? parseFloat(form.milestoneAmount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 6 })
@@ -275,7 +298,7 @@ export default function CreateStreamModal() {
 
   function handleClose() {
     const inProgress = approvePending || approveConfirming || createPending || createConfirming;
-    if (inProgress) return; // only block while wallet prompt is open or tx is confirming
+    if (inProgress) return;
     setStep(0);
     setForm({
       token:              walletTokens[0]?.address ?? DEFAULT_TOKEN,
@@ -288,21 +311,31 @@ export default function CreateStreamModal() {
     setHourly({ rate: '', hours: '' });
     setSelectedContractor(null);
     setCreatedStreamId(null);
+    setRegStatus(null);
+    setRegArgs(null);
+    createArgsRef.current = null;
     closeModal();
   }
 
-  // Allowance
+  // Allowance — only needed on step 2 (review/deploy)
   const { data: allowance, refetch: refetchAllowance } = useReadContract({
     address: form.token, abi: ERC20_ABI, functionName: 'allowance',
     args: [address, getContractAddress(chainId)],
-    query: { enabled: !!address && step >= 1 },
+    query: { enabled: !!address && step >= 2 },
   });
   const needsApproval = allowance != null && totalCostRaw > 0n && allowance < totalCostRaw;
 
   // Approve
   const { writeContract: doApprove, data: approveTxHash, isPending: approvePending, error: approveError } = useWriteContract();
   const { isLoading: approveConfirming, isSuccess: approveSuccess } = useWaitForTransactionReceipt({ hash: approveTxHash });
-  useEffect(() => { if (approveSuccess) { refetchAllowance(); setStep(2); } }, [approveSuccess]);
+
+  // After approval confirms, immediately pop wallet for create — no intermediate step.
+  // createArgsRef holds the args so we never read stale closure state here.
+  useEffect(() => {
+    if (!approveSuccess || !createArgsRef.current) return;
+    refetchAllowance();
+    doCreate({ address: getContractAddress(chainId), abi: ROUTER_ABI, functionName: 'createStream', args: createArgsRef.current });
+  }, [approveSuccess]);
 
   // Create
   const { writeContract: doCreate, data: createTxHash, isPending: createPending, error: createError } = useWriteContract();
@@ -356,17 +389,18 @@ export default function CreateStreamModal() {
 
   if (!open) return null;
 
-  const canConfigure = recipientAddr && form.milestoneAmount && ratePerSecond > 0n && milestoneCount >= 1n && !!form.verificationTarget;
+  // Step 0 → 1: need contractor + delivery target
+  const canStep0 = !!recipientAddr && !!form.verificationTarget;
 
-  // Every field the agent needs to register the stream MUST be present before we
-  // ever create it on-chain — otherwise we'd mint a stream the agent can't monitor.
-  // This mirrors the server's required-field check, enforced one step earlier.
-  const canCreate = !!recipientAddr && !!form.token && !!chainId
-    && ratePerSecond > 0n && windowSeconds > 0n && !!form.verificationTarget;
+  // Step 1 → 2: need all payment fields
+  const canStep1 = !!form.milestoneAmount && ratePerSecond > 0n && milestoneCount >= 1n && !!form.token;
+
+  // Step 2 deploy: every field the agent needs — mirrors the server's required-field check
+  const canCreate = canStep0 && canStep1 && !!chainId && windowSeconds > 0n;
 
   return (
     <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget) handleClose(); }}>
-      <div className="modal-panel w-full max-w-lg max-h-[92vh] overflow-y-auto relative">
+      <div className="modal-panel w-full sm:max-w-lg max-h-[96vh] sm:max-h-[92vh] overflow-y-auto relative">
 
         {/* Header */}
         <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-border">
@@ -375,12 +409,11 @@ export default function CreateStreamModal() {
               <button
                 onClick={() => setStep(s => s - 1)}
                 className="text-muted hover:text-white w-7 h-7 flex items-center justify-center rounded-lg hover:bg-border transition-colors text-sm"
-                title="Back"
               >←</button>
             )}
             <div className="flex flex-col gap-2">
               <h2 className="font-semibold text-base">
-                {step === 3 ? 'Stream created 🎉' : 'New stream'}
+                {step === 0 ? 'Who and where' : step === 1 ? 'Payment terms' : step === 3 ? 'Stream live' : 'Review and deploy'}
               </h2>
               {step < 3 && <StepDots current={step} total={3} />}
             </div>
@@ -394,156 +427,16 @@ export default function CreateStreamModal() {
 
         <div className="px-5 py-5 flex flex-col gap-4">
 
-          {/* ── Step 0: Configure ── */}
+          {/* ── Step 0: Who + where ── */}
           {step === 0 && (
-            <form onSubmit={e => { e.preventDefault(); setStep(1); refetchAllowance(); }} className="flex flex-col gap-4">
-
+            <form onSubmit={e => { e.preventDefault(); setStep(1); }} className="flex flex-col gap-5">
               <div>
                 <label className="label">Contractor</label>
                 <ContractorPicker selected={selectedContractor} onSelect={setSelectedContractor} />
               </div>
 
               <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="label mb-0">Payment token</label>
-                  {tokensLoading && (
-                    <div className="flex items-center gap-1.5 text-xs text-muted">
-                      <div className="w-3 h-3 border border-accent border-t-transparent rounded-full animate-spin" />
-                      Loading balances…
-                    </div>
-                  )}
-                </div>
-                <div className="grid grid-cols-3 gap-2">
-                  {walletTokens.map(t => (
-                    <button key={t.address} type="button"
-                      onClick={() => setForm(f => ({ ...f, token: t.address }))}
-                      className={`p-3 rounded-xl border text-left transition-all text-sm
-                        ${form.token === t.address ? 'border-accent/50 bg-accent/5 text-accent' : 'border-border text-muted hover:text-white'}`}
-                    >
-                      <div className="flex items-center gap-1.5 mb-0.5">
-                        {t.logoUrl
-                          ? <img src={t.logoUrl} alt={t.symbol} className="w-4 h-4 rounded-full shrink-0" onError={e => { e.target.style.display = 'none'; }} />
-                          : <span className="w-4 h-4 rounded-full bg-accent/20 flex items-center justify-center text-[8px] font-bold text-accent shrink-0">{t.symbol[0]}</span>
-                        }
-                        <span className="font-semibold">{t.symbol}</span>
-                      </div>
-                      {t.balanceRaw > 0n
-                        ? <div className="text-[11px] opacity-60 font-mono">{t.balance}</div>
-                        : <div className="text-[11px] opacity-40">no balance</div>
-                      }
-                    </button>
-                  ))}
-                  {/* Custom token address */}
-                  {walletTokens.length === 0 && !tokensLoading && (
-                    <p className="col-span-3 text-xs text-muted">No tokens found on this chain.</p>
-                  )}
-                </div>
-              </div>
-
-              {/* Optional hourly calculator */}
-              <div className="rounded-xl border border-border bg-dark/40 p-3">
-                <p className="text-[11px] text-muted mb-2 leading-relaxed">
-                  Bill by the hour? Enter your rate and hours per period and we fill the payment below.
-                </p>
-                <div className="flex gap-2">
-                  <div className="flex-1">
-                    <label className="text-[10px] uppercase tracking-wide text-muted/60 mb-1 block">Rate / hr</label>
-                    <div className="relative">
-                      <input
-                        type="text" inputMode="decimal" value={hourly.rate} placeholder="18"
-                        onChange={e => {
-                          const v = e.target.value;
-                          if (v !== '' && !/^\d*\.?\d*$/.test(v)) return;
-                          const next = { ...hourly, rate: v };
-                          setHourly(next);
-                          const r = parseFloat(next.rate), h = parseFloat(next.hours);
-                          if (r > 0 && h > 0) setForm(f => ({ ...f, milestoneAmount: parseFloat((r * h).toFixed(6)).toString() }));
-                        }}
-                        className="input pr-12 text-sm"
-                      />
-                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted text-[10px] font-mono">{selectedToken.symbol}</span>
-                    </div>
-                  </div>
-                  <div className="flex items-end pb-2.5 text-muted text-xs">×</div>
-                  <div className="flex-1">
-                    <label className="text-[10px] uppercase tracking-wide text-muted/60 mb-1 block">Hours / period</label>
-                    <input
-                      type="text" inputMode="decimal" value={hourly.hours} placeholder="30"
-                      onChange={e => {
-                        const v = e.target.value;
-                        if (v !== '' && !/^\d*\.?\d*$/.test(v)) return;
-                        const next = { ...hourly, hours: v };
-                        setHourly(next);
-                        const r = parseFloat(next.rate), h = parseFloat(next.hours);
-                        if (r > 0 && h > 0) setForm(f => ({ ...f, milestoneAmount: parseFloat((r * h).toFixed(6)).toString() }));
-                      }}
-                      className="input text-sm"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Payment per period */}
-              <div>
-                <label className="label">
-                  Payment per period <span className="text-muted/50 normal-case tracking-normal font-normal">— wages, milestone, sprint - whatever the work unit is</span>
-                </label>
-                <div className="relative">
-                  <input
-                    type="text" inputMode="decimal"
-                    value={form.milestoneAmount} placeholder="500"
-                    onChange={e => {
-                      const v = e.target.value;
-                      if (v === '' || /^\d*\.?\d*$/.test(v)) setForm(f => ({ ...f, milestoneAmount: v }));
-                    }}
-                    className="input pr-16" required
-                  />
-                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-muted text-xs font-mono">{selectedToken.symbol}</span>
-                </div>
-              </div>
-
-              {/* Number of periods */}
-              <div>
-                <label className="label">
-                  Number of periods <span className="text-muted/50 normal-case tracking-normal font-normal">— total periods in this contract</span>
-                </label>
-                <input
-                  type="number" min="1" max="52" step="1"
-                  value={form.milestoneCount}
-                  onChange={e => setForm(f => ({ ...f, milestoneCount: e.target.value }))}
-                  className="input"
-                  placeholder="e.g. 4"
-                />
-              </div>
-
-              {/* Payment window */}
-              <div>
-                <label className="label">
-                  Period length <span className="text-muted/50 normal-case tracking-normal font-normal">— how long each payment window runs</span>
-                </label>
-                <div className="flex gap-2">
-                  {WINDOW_OPTIONS.map(w => (
-                    <button
-                      key={w.seconds} type="button"
-                      onClick={() => setForm(f => ({ ...f, milestoneWindow: w.seconds.toString() }))}
-                      className={`flex-1 py-2.5 rounded-xl text-xs font-semibold transition-all border
-                        ${form.milestoneWindow === w.seconds.toString()
-                          ? 'bg-accent/10 text-accent border-accent/30'
-                          : 'text-muted border-border hover:text-white hover:border-border/80 bg-dark'}`}
-                    >
-                      {w.label}
-                    </button>
-                  ))}
-                </div>
-                <p className="text-[11px] text-muted mt-1.5 leading-relaxed">
-                  Funds stream continuously from the moment the contract starts. The agent extends each period - if it doesn't, the stream expires and unearned funds return to you.
-                </p>
-              </div>
-
-              {/* Verification source */}
-              <div>
-                <label className="label">Verification source <span className="text-muted/50 normal-case tracking-normal font-normal">(agent checks this to extend the stream)</span></label>
-                {/* Source tabs */}
+                <label className="label">Where do they deliver?</label>
                 <div className="grid grid-cols-4 gap-1.5 mb-3 p-1 bg-dark border border-border rounded-xl">
                   {VERIFICATION_SOURCES.map(src => (
                     <button key={src.key} type="button"
@@ -556,7 +449,6 @@ export default function CreateStreamModal() {
                     </button>
                   ))}
                 </div>
-                {/* Source-specific input */}
                 {form.verificationSource === 'github' ? (
                   <RepoPicker
                     githubHandle={profile?.github ?? null}
@@ -578,83 +470,189 @@ export default function CreateStreamModal() {
                 )}
               </div>
 
-              <button type="submit" disabled={!canConfigure}
+              <button type="submit" disabled={!canStep0}
                 className="btn-primary w-full disabled:opacity-40 disabled:cursor-not-allowed">
-                Continue →
+                Next →
               </button>
             </form>
           )}
 
-          {/* ── Step 1: Approve ── */}
+          {/* ── Step 1: Payment terms ── */}
           {step === 1 && (
-            <div className="flex flex-col gap-4">
-              <div className="bg-dark border border-border rounded-xl p-4 text-sm text-muted leading-relaxed">
-                Approve the contract to hold <span className="text-white font-mono">{totalCostDisplay} {selectedToken.symbol}</span>. The stream starts locked - the contractor earns nothing until the agent verifies each period and extends it. If a period isn't verified, the stream stops and the unearned balance returns to you.
+            <form onSubmit={e => { e.preventDefault(); refetchAllowance(); setStep(2); }} className="flex flex-col gap-5">
+
+              {/* Hourly rate × hrs/week = charge per pay cycle */}
+              <div>
+                <label className="label">Charge per hour</label>
+                {/* On mobile: rate + hours on one row, result below. On sm+: single row */}
+                <div className="flex flex-col sm:flex-row gap-2 mb-1.5">
+                  <div className="flex gap-2 flex-1">
+                    <div className="relative flex-1">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted text-xs select-none">$/hr</span>
+                      <input type="text" inputMode="decimal" value={hourly.rate} placeholder="18"
+                        onChange={e => {
+                          const v = e.target.value;
+                          if (v !== '' && !/^\d*\.?\d*$/.test(v)) return;
+                          const next = { ...hourly, rate: v };
+                          setHourly(next);
+                          const r = parseFloat(next.rate), h = parseFloat(next.hours);
+                          if (r > 0 && h > 0) setForm(f => ({ ...f, milestoneAmount: parseFloat((r * h).toFixed(6)).toString() }));
+                        }}
+                        className="input pl-9 text-sm" />
+                    </div>
+                    <div className="flex items-center text-muted text-xs shrink-0">×</div>
+                    <div className="relative flex-1">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted text-xs select-none">hrs/wk</span>
+                      <input type="text" inputMode="decimal" value={hourly.hours} placeholder="30"
+                        onChange={e => {
+                          const v = e.target.value;
+                          if (v !== '' && !/^\d*\.?\d*$/.test(v)) return;
+                          const next = { ...hourly, hours: v };
+                          setHourly(next);
+                          const r = parseFloat(next.rate), h = parseFloat(next.hours);
+                          if (r > 0 && h > 0) setForm(f => ({ ...f, milestoneAmount: parseFloat((r * h).toFixed(6)).toString() }));
+                        }}
+                        className="input pl-16 text-sm" />
+                    </div>
+                  </div>
+                  <div className="flex items-center text-muted text-xs shrink-0 sm:block hidden">=</div>
+                  <div className="relative flex-1">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted text-xs select-none sm:hidden">= charge</span>
+                    <input type="text" inputMode="decimal" value={form.milestoneAmount} placeholder="540"
+                      onChange={e => {
+                        const v = e.target.value;
+                        if (v === '' || /^\d*\.?\d*$/.test(v)) {
+                          setForm(f => ({ ...f, milestoneAmount: v }));
+                          setHourly({ rate: '', hours: '' });
+                        }
+                      }}
+                      className="input sm:pr-16 pr-16 pl-16 sm:pl-3 text-sm font-semibold" required />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted text-[10px] font-mono">/charge</span>
+                  </div>
+                </div>
+                <p className="text-[11px] text-muted">Fill rate and hours or type the agreed charge directly.</p>
               </div>
-              <div className="flex flex-col divide-y divide-border border border-border rounded-xl overflow-hidden text-xs font-mono">
-                <div className="flex justify-between px-4 py-3">
-                  <span className="text-muted">To</span>
-                  <span>{selectedContractor?.name || `${recipientAddr.slice(0,8)}…${recipientAddr.slice(-6)}`}</span>
+
+              {/* Token + duration + pay schedule — 2-col on mobile, 3-col on sm+ */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="text-[10px] uppercase tracking-wide text-muted/60 mb-1.5 block">Currency</label>
+                  {tokensLoading
+                    ? <div className="h-8 flex items-center text-xs text-muted">Loading…</div>
+                    : <div className="flex flex-col gap-1">
+                        {walletTokens.slice(0, 3).map(t => (
+                          <button key={t.address} type="button"
+                            onClick={() => setForm(f => ({ ...f, token: t.address }))}
+                            className={`flex items-center gap-1.5 px-2.5 py-2 rounded-lg border text-xs transition-all
+                              ${form.token === t.address ? 'border-accent/50 bg-accent/5 text-accent' : 'border-border text-muted hover:text-white'}`}>
+                            {t.logoUrl
+                              ? <img src={t.logoUrl} alt={t.symbol} className="w-3.5 h-3.5 rounded-full shrink-0" onError={e => { e.target.style.display = 'none'; }} />
+                              : <span className="w-3.5 h-3.5 rounded-full bg-accent/20 flex items-center justify-center text-[7px] font-bold text-accent shrink-0">{t.symbol[0]}</span>
+                            }
+                            <span className="font-semibold truncate">{t.symbol}</span>
+                          </button>
+                        ))}
+                        {walletTokens.length === 0 && <p className="text-xs text-muted">No tokens found.</p>}
+                      </div>
+                  }
                 </div>
-                <div className="flex justify-between px-4 py-3">
-                  <span className="text-muted">Per period</span>
-                  <span>{perMilestoneDisplay} {selectedToken.symbol}</span>
+
+                <div className="col-span-2 sm:col-span-1">
+                  <label className="text-[10px] uppercase tracking-wide text-muted/60 mb-1.5 block">{durationConfig.label}</label>
+                  <input type="number" min="1" max="104" step="1"
+                    value={form.milestoneCount}
+                    onChange={e => setForm(f => ({ ...f, milestoneCount: e.target.value }))}
+                    className="input text-sm" placeholder={durationConfig.placeholder} required />
+                  <p className="text-[10px] text-muted mt-1">{durationConfig.hint(milestoneCountInt)}</p>
+                  {contractEndDate && (
+                    <p className="text-[10px] text-accent/70 mt-0.5">ends {contractEndDate}</p>
+                  )}
                 </div>
-                <div className="flex justify-between px-4 py-3">
-                  <span className="text-muted">Periods</span>
-                  <span>{form.milestoneCount} × {WINDOW_OPTIONS.find(w => w.seconds.toString() === form.milestoneWindow)?.label}</span>
-                </div>
-                <div className="flex justify-between px-4 py-3 bg-accent/5">
-                  <span className="text-muted">Total deposit</span>
-                  <span className="text-accent font-bold">{totalCostDisplay} {selectedToken.symbol}</span>
+
+                <div>
+                  <label className="text-[10px] uppercase tracking-wide text-muted/60 mb-1.5 block">Pay schedule</label>
+                  <div className="flex flex-col gap-1">
+                    {WINDOW_OPTIONS.map(w => (
+                      <button key={w.seconds} type="button"
+                        onClick={() => setForm(f => ({ ...f, milestoneWindow: w.seconds.toString() }))}
+                        className={`py-2 rounded-lg text-xs font-semibold transition-all border
+                          ${form.milestoneWindow === w.seconds.toString()
+                            ? 'bg-accent/10 text-accent border-accent/30'
+                            : 'text-muted border-border hover:text-white bg-dark'}`}>
+                        {w.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
-              {approveError && (
-                <div className="text-xs text-red-400 font-mono bg-red-500/5 border border-red-500/20 rounded-xl px-4 py-2.5 break-all">
-                  {approveError.shortMessage ?? approveError.message ?? 'Approval failed'}
-                </div>
-              )}
-              <button onClick={() => doApprove({ address: form.token, abi: ERC20_ABI, functionName: 'approve', args: [getContractAddress(chainId), totalCostRaw] })}
-                disabled={approvePending || (!!approveTxHash && !approveError)}
-                className="btn-primary w-full disabled:opacity-40">
-                {approvePending ? 'Confirm in wallet…' : (approveTxHash && !approveError) ? 'Approving…' : `Approve ${totalCostDisplay} ${selectedToken.symbol}`}
+
+              <button type="submit" disabled={!canStep1}
+                className="btn-primary w-full disabled:opacity-40 disabled:cursor-not-allowed">
+                Review →
               </button>
-            </div>
+            </form>
           )}
 
-          {/* ── Step 2: Create ── */}
+          {/* ── Step 2: Review + Approve & Deploy (combined) ── */}
           {step === 2 && (
             <div className="flex flex-col gap-4">
+              {/* Summary */}
               <div className="flex flex-col divide-y divide-border border border-border rounded-xl overflow-hidden text-sm font-mono">
                 {[
-                  ['To',              selectedContractor?.name ? `${selectedContractor.name} · ${recipientAddr.slice(0,8)}…` : `${recipientAddr.slice(0,8)}…${recipientAddr.slice(-6)}`],
-                  ['Token',           selectedToken.symbol],
-                  ['Per period',      `${perMilestoneDisplay} ${selectedToken.symbol}`],
-                  ['Periods',         `${form.milestoneCount} × ${WINDOW_OPTIONS.find(w => w.seconds.toString() === form.milestoneWindow)?.label}`],
-                  form.verificationTarget ? [VERIFICATION_SOURCES.find(s=>s.key===form.verificationSource)?.label ?? 'Source', form.verificationTarget] : null,
-                  ['Total deposit',   `${totalCostDisplay} ${selectedToken.symbol}`],
-                ].filter(Boolean).map(([label, value], i, arr) => (
-                  <div key={label} className={`flex justify-between px-4 py-3 ${i === arr.length - 1 ? 'bg-accent/5' : ''}`}>
-                    <span className="text-muted">{label}</span>
-                    <span className={i === arr.length - 1 ? 'text-accent font-bold' : 'text-white truncate max-w-[60%] text-right'}>{value}</span>
+                  ['Contractor',    selectedContractor?.name ? `${selectedContractor.name} · ${recipientAddr.slice(0,8)}…` : `${recipientAddr.slice(0,8)}…${recipientAddr.slice(-6)}`],
+                  ['Delivers via',  `${VERIFICATION_SOURCES.find(s=>s.key===form.verificationSource)?.label ?? ''} · ${form.verificationTarget}`],
+                  ['Currency',      selectedToken.symbol],
+                  ['Charge',        `${perMilestoneDisplay} ${selectedToken.symbol} ${scheduleSubLabel}`],
+                  ['Duration',      contractEndDate ? `${scheduleLabel} · ends ${contractEndDate}` : `${form.milestoneCount} · ${scheduleLabel}`],
+                  ['Total deposit', `${totalCostDisplay} ${selectedToken.symbol}`],
+                ].map(([label, value], i, arr) => (
+                  <div key={label} className={`flex flex-col sm:flex-row sm:justify-between sm:items-center px-4 py-3 gap-0.5 sm:gap-2 ${i === arr.length - 1 ? 'bg-accent/5' : ''}`}>
+                    <span className="text-muted text-[10px] uppercase tracking-wide shrink-0">{label}</span>
+                    <span className={`text-xs text-left sm:text-right break-all ${i === arr.length - 1 ? 'text-accent font-bold' : 'text-white'}`}>{value}</span>
                   </div>
                 ))}
               </div>
-              {createError && (
-                <div className="text-xs text-red-400 font-mono bg-red-500/5 border border-red-500/20 rounded-xl px-4 py-2.5 break-all">
-                  {createError.shortMessage ?? createError.message ?? 'Transaction failed'}
+
+              {/* Approve status (only shown while approving) */}
+              {needsApproval && (approvePending || approveConfirming) && (
+                <div className="text-xs text-muted font-mono bg-dark border border-border rounded-xl px-4 py-2.5 flex items-center gap-2">
+                  <div className="w-3 h-3 border border-accent border-t-transparent rounded-full animate-spin shrink-0" />
+                  {approvePending ? 'Waiting for approval confirmation…' : 'Approval confirming — wallet will open for deposit next…'}
                 </div>
               )}
+
               {ratePerSecond === 0n && (
                 <div className="text-xs text-yellow-400 font-mono bg-yellow-500/5 border border-yellow-500/20 rounded-xl px-4 py-2.5">
-                  ⚠ Rate too small - increase the amount or switch to a shorter unit (e.g. /day instead of /month)
+                  Rate rounds to zero — increase the amount or use a shorter period.
                 </div>
               )}
+
+              {(approveError || createError) && (
+                <div className="text-xs text-red-400 font-mono bg-red-500/5 border border-red-500/20 rounded-xl px-4 py-2.5 break-all">
+                  {(approveError ?? createError)?.shortMessage ?? (approveError ?? createError)?.message ?? 'Transaction failed'}
+                </div>
+              )}
+
+              {/* Single CTA — approve then immediately create, or create directly if already approved */}
               <button
-                onClick={() => doCreate({ address: getContractAddress(chainId), abi: ROUTER_ABI, functionName: 'createStream', args: [recipientAddr, form.token, ratePerSecond, 0n, totalCostRaw] })}
-                disabled={createPending || (!!createTxHash && !createReceiptError && !createError) || !canCreate}
-                className="btn-primary w-full disabled:opacity-40">
-                {createPending ? 'Confirm in wallet…' : (createTxHash && !createReceiptError && !createError) ? 'Creating stream…' : 'Deposit & create stream'}
+                onClick={() => {
+                  const args = [recipientAddr, form.token, ratePerSecond, 0n, totalCostRaw];
+                  createArgsRef.current = args;
+                  if (needsApproval) {
+                    doApprove({ address: form.token, abi: ERC20_ABI, functionName: 'approve', args: [getContractAddress(chainId), totalCostRaw] });
+                  } else {
+                    doCreate({ address: getContractAddress(chainId), abi: ROUTER_ABI, functionName: 'createStream', args });
+                  }
+                }}
+                disabled={!canCreate || approvePending || approveConfirming || createPending || (!!createTxHash && !createReceiptError && !createError)}
+                className="btn-primary w-full disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {approvePending    ? 'Approve in wallet…'   :
+                 approveConfirming ? 'Approving…'           :
+                 createPending     ? 'Confirm in wallet…'   :
+                 (createTxHash && !createReceiptError && !createError) ? 'Creating stream…' :
+                 needsApproval     ? `Approve & deploy — ${totalCostDisplay} ${selectedToken.symbol}` :
+                                     `Deploy stream — ${totalCostDisplay} ${selectedToken.symbol}`}
               </button>
             </div>
           )}
@@ -664,12 +662,9 @@ export default function CreateStreamModal() {
             <div className="flex flex-col items-center text-center gap-4 py-2">
               <div className="w-14 h-14 rounded-2xl bg-accent/10 border border-accent/20 flex items-center justify-center text-2xl">✓</div>
               <div>
-                <p className="font-semibold mb-1">
-                  Stream created - waiting for first verification
-                </p>
+                <p className="font-semibold mb-1">Stream is live</p>
                 <p className="text-muted text-sm">
-                  {perMilestoneDisplay} {selectedToken.symbol} per period ·{' '}
-                  {form.milestoneCount} × {WINDOW_OPTIONS.find(w => w.seconds.toString() === form.milestoneWindow)?.label}
+                  {perMilestoneDisplay} {selectedToken.symbol} {scheduleSubLabel} · {form.milestoneCount} weeks
                 </p>
               </div>
               {form.verificationTarget && regStatus === 'ok' && (
