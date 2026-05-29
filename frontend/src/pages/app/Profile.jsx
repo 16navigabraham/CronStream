@@ -230,7 +230,7 @@ export default function Profile() {
                 {role}
               </span>
             )}
-            {form.github && (
+            {!isCompany && form.github && (
               <a href={`https://github.com/${form.github}`} target="_blank" rel="noopener noreferrer"
                 className="flex items-center gap-1 text-xs text-muted hover:text-white font-mono transition-colors truncate">
                 <GithubIcon />
@@ -298,14 +298,16 @@ export default function Profile() {
                 <input name="name" value={draftForm.name} onChange={handleDraftChange}
                   placeholder={isCompany ? 'Acme Corp' : 'Alex Johnson'} className="input" />
               </div>
-              <div>
-                <label className="label">GitHub {isCompany ? 'organisation' : 'username'}</label>
-                <div className="relative">
-                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted font-mono text-sm select-none">github.com/</span>
-                  <input name="github" value={draftForm.github} onChange={handleDraftChange}
-                    placeholder={isCompany ? 'acme-org' : 'alexj'} className="input pl-[7.5rem]" />
+              {!isCompany && (
+                <div>
+                  <label className="label">GitHub username</label>
+                  <div className="relative">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted font-mono text-sm select-none">github.com/</span>
+                    <input name="github" value={draftForm.github} onChange={handleDraftChange}
+                      placeholder="alexj" className="input pl-[7.5rem]" />
+                  </div>
                 </div>
-              </div>
+              )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="label">X / Twitter</label>
@@ -345,7 +347,7 @@ export default function Profile() {
           ) : (
             <>
               <FieldView label={isCompany ? 'Company name' : 'Your name'} value={form.name} />
-              <FieldView label={`GitHub ${isCompany ? 'organisation' : 'username'}`} value={form.github} prefix="github.com/" />
+              {!isCompany && <FieldView label="GitHub username" value={form.github} prefix="github.com/" />}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <FieldView label="X / Twitter" value={form.twitter}  prefix="x.com/" />
                 <FieldView label="LinkedIn"     value={form.linkedin} prefix="linkedin.com/in/" />
