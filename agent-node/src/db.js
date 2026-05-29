@@ -135,6 +135,7 @@ export async function initDb() {
     // event_ref — stores PR#N or commit SHA; replaces pr_number as the replay-guard key
     'ALTER TABLE processed_extensions ADD COLUMN event_ref TEXT',
     // OAuth tokens — companies connect their platforms via OAuth instead of pasting credentials
+    'ALTER TABLE profiles ADD COLUMN github_installation_id  TEXT',
     'ALTER TABLE profiles ADD COLUMN github_oauth_token      TEXT',
     'ALTER TABLE profiles ADD COLUMN atlassian_access_token  TEXT',
     'ALTER TABLE profiles ADD COLUMN atlassian_refresh_token TEXT',
@@ -561,7 +562,7 @@ export async function getLastExtensionTime(streamId) {
 // ─── OAuth Token Storage ──────────────────────────────────────────────────────
 
 const OAUTH_COLS = {
-  github:    { access: 'github_oauth_token' },
+  github:    { access: 'github_oauth_token', installationId: 'github_installation_id' },
   atlassian: { access: 'atlassian_access_token', refresh: 'atlassian_refresh_token', cloudId: 'atlassian_cloud_id', expiresAt: 'atlassian_expires_at' },
   bitbucket: { access: 'bitbucket_oauth_token',  refresh: 'bitbucket_refresh_token' },
   figma:     { access: 'figma_oauth_token',       refresh: 'figma_refresh_token' },

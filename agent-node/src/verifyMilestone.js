@@ -103,7 +103,7 @@ async function checkCodeDiff(owner, repo, prNumber, token) {
   return qualifying;
 }
 
-async function verifyGitHub({ streamId, contractorAddress, githubPayload, companyCredentials }) {
+async function verifyGitHub({ streamId, contractorAddress, githubPayload, githubToken }) {
   if (!githubPayload) {
     throw new VerificationError(0, 'githubPayload is required for source "github"');
   }
@@ -118,12 +118,12 @@ async function verifyGitHub({ streamId, contractorAddress, githubPayload, compan
   const prNumber = githubPayload?.pull_request?.number;
   if (!prNumber) throw new VerificationError(0, 'Missing pull_request.number in githubPayload');
 
-  // Use company's OAuth token for private repos; fall back to agent token for public
-  const githubToken = companyCredentials?.github_oauth_token ?? null;
+  // githubToken is a resolved GitHub App installation token (private repos);
+  // falls back to the agent's env token for public repos inside githubGet.
 
   console.log(
     `[verifyMilestone:github] stream=${streamId} | contractor=${contractorAddress} | ` +
-    `repo=${owner}/${repoName} | PR#${prNumber} | token=${githubToken ? 'company-oauth' : 'agent-env'}`,
+    `repo=${owner}/${repoName} | PR#${prNumber} | token=${githubToken ? 'installation' : 'agent-env'}`,
   );
 
   // Layer 2 — PR merged? (no API call, fail fast)
@@ -429,6 +429,7 @@ async function verifyFigma({ streamId, target, credentials }) {
  * @param {string}  [params.verificationTarget]   — repo path, ticket key, Figma URL, etc.
  * @param {object}  [params.githubPayload]        — GitHub webhook payload (required for source='github')
  * @param {object}  [params.companyCredentials]   — company profile row with integration credentials
+ * @param {string}  [params.githubToken]          — resolved GitHub App installation token
  *
  * @returns {Promise<object>} Verification summary
  * @throws  {VerificationError} If any verification check fails
@@ -440,10 +441,11 @@ export async function verifyMilestone({
   verificationTarget,
   githubPayload,
   companyCredentials,
+  githubToken,
 }) {
   switch (verificationSource) {
     case 'github':
-      return verifyGitHub({ streamId, contractorAddress, githubPayload, companyCredentials });
+      return verifyGitHub({ streamId, contractorAddress, githubPayload, githubToken });
 
     case 'jira':
       return verifyJira({ streamId, target: verificationTarget, credentials: companyCredentials });

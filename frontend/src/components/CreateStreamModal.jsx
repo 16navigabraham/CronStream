@@ -309,20 +309,18 @@ export default function CreateStreamModal() {
         if (log) {
           const decoded = publicClient.decodeEventLog({ abi: [event], data: log.data, topics: log.topics });
           setCreatedStreamId(decoded.streamId);
-          if (form.verificationTarget) {
-            await registerStreamWithAgent({
-              streamId:                decoded.streamId,
-              repo:                    form.verificationSource === 'github' ? form.verificationTarget : null,
-              verificationSource:      form.verificationSource,
-              verificationTarget:      form.verificationTarget,
-              recipient:               recipientAddr,
-              ratePerSecond:           ratePerSecond.toString(),
-              token:                   form.token,
-              extensionDurationSeconds: Number(windowSeconds),
-              chainId,
-              authFetch,
-            });
-          }
+          await registerStreamWithAgent({
+            streamId:                decoded.streamId,
+            repo:                    form.verificationSource === 'github' ? form.verificationTarget : null,
+            verificationSource:      form.verificationSource,
+            verificationTarget:      form.verificationTarget || null,
+            recipient:               recipientAddr,
+            ratePerSecond:           ratePerSecond.toString(),
+            token:                   form.token,
+            extensionDurationSeconds: Number(windowSeconds),
+            chainId,
+            authFetch,
+          });
         }
       } catch (e) { console.warn('Post-create (non-fatal):', e); }
     }
@@ -332,7 +330,7 @@ export default function CreateStreamModal() {
 
   if (!open) return null;
 
-  const canConfigure = recipientAddr && form.milestoneAmount && ratePerSecond > 0n && milestoneCount >= 1n;
+  const canConfigure = recipientAddr && form.milestoneAmount && ratePerSecond > 0n && milestoneCount >= 1n && !!form.verificationTarget;
 
   return (
     <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget) handleClose(); }}>

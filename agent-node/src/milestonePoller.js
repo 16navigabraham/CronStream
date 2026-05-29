@@ -15,7 +15,7 @@
 import { getAllMonitoredStreams, getLastExtensionTime, isAlreadyProcessed, recordExtension, getProfile } from './db.js';
 import { readStreamBatch, submitExtension } from './chainSubmitter.js';
 import { signExtensionVoucher } from './agentSigner.js';
-import { VerificationError } from './verifyMilestone.js';
+import { getInstallationToken } from './githubApp.js';
 
 const POLL_INTERVAL_MS  = 15 * 60 * 1000;  // run every 15 minutes
 const WARN_WINDOW_S     = 48 * 3600;        // check streams expiring within 48h
@@ -274,7 +274,9 @@ async function checkStream(dbRow) {
   const src = (source ?? 'github').toLowerCase();
 
   if (src === 'github') {
-    const token = credentials?.github_oauth_token ?? null;
+    const token = credentials?.github_installation_id
+      ? await getInstallationToken(credentials.github_installation_id)
+      : null;
     found = await pollGitHub(target, sinceTimestamp, token);
   } else if (src === 'jira') {
     found = await pollJira(target, credentials);

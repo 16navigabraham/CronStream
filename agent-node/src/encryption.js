@@ -189,14 +189,14 @@ export function publicProfile(row) {
   const {
     // eslint-disable-next-line no-unused-vars
     api_key, jira_token, jira_email, bitbucket_password, figma_token,
-    github_oauth_token, atlassian_access_token, atlassian_refresh_token,
+    github_oauth_token, github_installation_id, atlassian_access_token, atlassian_refresh_token,
     bitbucket_oauth_token, bitbucket_refresh_token, figma_oauth_token, figma_refresh_token,
     ...pub
   } = row;
   return {
     ...pub,
     has_api_key:          row.has_api_key ?? false,
-    github_connected:     !!row.github_oauth_token,
+    github_connected:     !!row.github_installation_id || !!row.github_oauth_token,
     atlassian_connected:  !!row.atlassian_access_token,
     bitbucket_connected:  !!row.bitbucket_oauth_token || (!!row.bitbucket_workspace && !!row.bitbucket_user && !!row.bitbucket_password),
     figma_connected:      !!row.figma_oauth_token     || !!row.figma_token,

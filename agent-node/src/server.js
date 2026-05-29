@@ -22,6 +22,7 @@ import { publicProfile } from './encryption.js';
 import publicApiRouter        from './publicApi.js';
 import { startStreamListeners } from './streamListener.js';
 import { startMilestonePoller } from './milestonePoller.js';
+import { getInstallationToken } from './githubApp.js';
 import { generateNonce, verifySiwe, issueJwt, verifyJwt, verifyJwtOrApiKey, verifyJwtOrApiKeyOrX402 } from './auth.js';
 
 const app = express();
@@ -159,10 +160,14 @@ app.post('/api/v1/auth/:provider/initiate', verifyJwt, (req, res) => {
 
   let redirectUrl;
   switch (provider) {
-    case 'github':
-      if (!process.env.GITHUB_CLIENT_ID) return res.status(503).json({ error: 'GitHub OAuth not configured on this server' });
-      redirectUrl = `https://github.com/login/oauth/authorize?client_id=${process.env.GITHUB_CLIENT_ID}&scope=${encodeURIComponent('repo read:org admin:repo_hook')}&state=${state}&redirect_uri=${encodeURIComponent(cb)}`;
+    case 'github': {
+      const appSlug = process.env.GITHUB_APP_SLUG;
+      if (!appSlug) return res.status(503).json({ error: 'GitHub App not configured — set GITHUB_APP_SLUG' });
+      // GitHub App installation — company selects which repos to grant access to.
+      // State param is passed through so we know which wallet to associate the installation with.
+      redirectUrl = `https://github.com/apps/${appSlug}/installations/new?state=${state}`;
       break;
+    }
     case 'atlassian':
       if (!process.env.ATLASSIAN_CLIENT_ID) return res.status(503).json({ error: 'Atlassian OAuth not configured on this server' });
       redirectUrl = `https://auth.atlassian.com/authorize?audience=api.atlassian.com&client_id=${process.env.ATLASSIAN_CLIENT_ID}&scope=${encodeURIComponent('read:jira-work offline_access')}&redirect_uri=${encodeURIComponent(cb)}&state=${state}&response_type=code&prompt=consent`;
@@ -208,14 +213,18 @@ app.get('/api/v1/auth/:provider/callback', async (req, res) => {
     switch (provider) {
 
       case 'github': {
-        const r = await fetch('https://github.com/login/oauth/access_token', {
-          method: 'POST',
-          headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-          body: JSON.stringify({ client_id: process.env.GITHUB_CLIENT_ID, client_secret: process.env.GITHUB_CLIENT_SECRET, code, redirect_uri: cb }),
-        });
-        const d = await r.json();
-        if (!d.access_token) throw new Error(d.error_description ?? 'No access_token from GitHub');
-        await saveOAuthTokens(address, 'github', { accessToken: d.access_token });
+        // GitHub App installation callback — receives installation_id, not a code.
+        const installationId = req.query.installation_id;
+        if (!installationId) throw new Error('No installation_id received from GitHub');
+        // Save installation ID — used to generate installation access tokens for API calls
+        const db = getDb();
+        if (db) {
+          await db.execute({
+            sql:  `UPDATE profiles SET github_installation_id = ?, updated_at = unixepoch() WHERE address = ?`,
+            args: [String(installationId), address.toLowerCase()],
+          });
+        }
+        console.log(`[oauth:github] ✓ App installed — installation_id=${installationId} for ${address.slice(0, 8)}…`);
         break;
       }
 
@@ -284,56 +293,6 @@ app.delete('/api/v1/auth/:provider', verifyJwt, async (req, res) => {
     res.status(400).json({ error: err.message });
   }
 });
-
-// ─── GitHub webhook auto-setup ───────────────────────────────────────────────
-
-async function ensureGitHubWebhook(repo, token) {
-  const webhookUrl = `${AGENT_EXT_URL}/api/v1/webhook/github`;
-  const secret     = process.env.GITHUB_WEBHOOK_SECRET;
-  if (!token || !secret) return;
-
-  const headers = {
-    Authorization:          `Bearer ${token}`,
-    Accept:                 'application/vnd.github+json',
-    'X-GitHub-Api-Version': '2022-11-28',
-    'Content-Type':         'application/json',
-  };
-
-  try {
-    // Check if our webhook already exists to avoid duplicates
-    const listRes = await fetch(`https://api.github.com/repos/${repo}/hooks`, { headers, signal: AbortSignal.timeout(6000) });
-    if (listRes.ok) {
-      const hooks = await listRes.json();
-      const exists = Array.isArray(hooks) && hooks.some(h => h.config?.url === webhookUrl);
-      if (exists) {
-        console.log(`[webhook-setup] Webhook already exists for ${repo}`);
-        return;
-      }
-    }
-
-    // Create the webhook
-    const createRes = await fetch(`https://api.github.com/repos/${repo}/hooks`, {
-      method:  'POST',
-      headers,
-      signal:  AbortSignal.timeout(6000),
-      body: JSON.stringify({
-        name:   'web',
-        active: true,
-        events: ['push', 'pull_request', 'workflow_run'],
-        config: { url: webhookUrl, content_type: 'json', secret, insecure_ssl: '0' },
-      }),
-    });
-
-    if (createRes.ok) {
-      console.log(`[webhook-setup] ✓ Webhook created for ${repo}`);
-    } else {
-      const err = await createRes.text();
-      console.warn(`[webhook-setup] Could not create webhook for ${repo}: ${createRes.status} ${err.slice(0, 200)}`);
-    }
-  } catch (err) {
-    console.warn(`[webhook-setup] Error setting up webhook for ${repo}: ${err.message}`);
-  }
-}
 
 // ─── Shared Helpers ──────────────────────────────────────────────────────────
 
@@ -737,18 +696,26 @@ app.post('/api/v1/webhook/github', async (req, res, next) => { try {
       if (stream) {
         verificationSource = stream.verification_source ?? 'github';
         verificationTarget = stream.verification_target ?? stream.github_repo ?? null;
-        if (stream.sender && verificationSource !== 'github') {
+        // Load credentials for ALL sources — github now needs the installation ID
+        if (stream.sender) {
           companyCredentials = await getProfile(stream.sender);
         }
       }
     } catch { /* DB unavailable — fall through with github defaults */ }
+
+    // Resolve a GitHub App installation token for this company (private repo access).
+    // Falls back to the agent's env token inside the API helpers for public repos.
+    let githubToken = null;
+    if (verificationSource === 'github' && companyCredentials?.github_installation_id) {
+      githubToken = await getInstallationToken(companyCredentials.github_installation_id);
+    }
 
     // For push events (no PR), verify CI against the actual commit SHA
     // instead of assuming success — prevents accidental extensions on unverified pushes.
     let ciConclusion = 'success';
     if (event === 'push' && commitSha && verificationSource === 'github') {
       try {
-        const ghToken = companyCredentials?.github_oauth_token ?? process.env.GITHUB_TOKEN;
+        const ghToken = githubToken ?? process.env.GITHUB_TOKEN;
         if (ghToken) {
           const ciRes = await fetch(
             `https://api.github.com/repos/${repo}/actions/runs?head_sha=${commitSha}&status=completed&per_page=5`,
@@ -781,6 +748,7 @@ app.post('/api/v1/webhook/github', async (req, res, next) => { try {
         verificationTarget,
         githubPayload,
         companyCredentials,
+        githubToken,
       });
     } catch (err) {
       if (err instanceof VerificationError) {
@@ -1046,15 +1014,8 @@ app.post('/api/v1/register-stream', devAuth(getProfileByApiKey), async (req, res
       `source=${verificationSource ?? 'github'} target=${resolvedTarget}`,
     );
 
-    // Auto-create GitHub webhook if source is github and company has OAuth token
-    if ((verificationSource === 'github' || !verificationSource) && resolvedTarget && req.callerAddress) {
-      try {
-        const companyProfile = await getProfile(req.callerAddress);
-        if (companyProfile?.github_oauth_token) {
-          ensureGitHubWebhook(resolvedTarget, companyProfile.github_oauth_token);
-        }
-      } catch { /* non-fatal */ }
-    }
+    // No per-repo webhook setup needed — the GitHub App installation delivers
+    // events for all granted repos to the app-level webhook automatically.
 
     return res.json({
       success: true, streamId,

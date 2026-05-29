@@ -40,38 +40,46 @@ function tokenMeta(chainId, tokenAddress) {
 //  complete      — expired, contractor withdrew their earnings
 //  settled       — expired, no balance on either side
 //
+function isPendingStream(stream) {
+  const until = Number(stream.streamValidUntil ?? 0);
+  const start = Number(stream.startTime ?? 0);
+  return start > 0 && until <= start;
+}
+
 function getStatus(stream) {
   const nowSec = Math.floor(Date.now() / 1000);
   if (stream.streamValidUntil && Number(stream.streamValidUntil) > nowSec) return 'active';
+  if (isPendingStream(stream)) return 'pending';
 
   const balance   = stream.rawBalance     ?? 0n;
   const withdrawn = stream.totalWithdrawn ?? 0n;
   const deposited = stream.totalDeposited ?? 0n;
 
-  // Unearned = funds contractor never earned → company can reclaim
   if (deposited > 0n) {
     const unearned = deposited - (balance + withdrawn);
     if (unearned > 0n) return 'action';
   }
 
-  if (balance > 0n)   return 'concluded'; // contractor earned but hasn't withdrawn
+  if (balance > 0n)   return 'concluded';
   if (withdrawn > 0n) return 'complete';
   return 'settled';
 }
 
 const STATUS_META = {
-  active:    { label: 'Active',     className: 'badge-active',                                                                                                                   icon: Zap },
-  action:    { label: 'Reclaim',    className: 'inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full border border-yellow-500/30 bg-yellow-500/10 text-yellow-400', icon: AlertCircle },
-  concluded: { label: 'Concluded',  className: 'inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full border border-border text-muted',                  icon: Clock },
-  complete:  { label: 'Complete',   className: 'inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full border border-accent/30 text-accent/70 bg-accent/5', icon: CheckCircle2 },
-  settled:   { label: 'Settled',    className: 'inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full border border-border text-muted/50',               icon: CheckCircle2 },
+  active:    { label: 'Active',     className: 'badge-active',                                                                                                                        icon: Zap },
+  pending:   { label: 'Pending',    className: 'inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full border border-yellow-500/30 bg-yellow-500/5 text-yellow-400/80', icon: Clock },
+  action:    { label: 'Reclaim',    className: 'inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full border border-yellow-500/30 bg-yellow-500/10 text-yellow-400',    icon: AlertCircle },
+  concluded: { label: 'Concluded',  className: 'inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full border border-border text-muted',                       icon: Clock },
+  complete:  { label: 'Complete',   className: 'inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full border border-accent/30 text-accent/70 bg-accent/5',    icon: CheckCircle2 },
+  settled:   { label: 'Settled',    className: 'inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full border border-border text-muted/50',                    icon: CheckCircle2 },
 };
-const STATUS_ORDER = { active: 0, action: 1, concluded: 2, complete: 3, settled: 4 };
+const STATUS_ORDER = { active: 0, pending: 1, action: 2, concluded: 3, complete: 4, settled: 5 };
 
 // Filter tab config
 const FILTERS = [
   { key: 'all',       label: 'All' },
   { key: 'active',    label: 'Active' },
+  { key: 'pending',   label: 'Pending' },
   { key: 'action',    label: 'Reclaim' },
   { key: 'concluded', label: 'Concluded' },
   { key: 'complete',  label: 'Complete' },
@@ -280,6 +288,7 @@ export default function CompanyHistory() {
   const totalDeposited  = enriched.reduce((s, e) => s + (e.totalDeposited  ?? 0n), 0n);
   const totalPaid       = enriched.reduce((s, e) => s + (e.totalWithdrawn  ?? 0n), 0n);
   const activeCount     = enriched.filter(e => e.streamValidUntil && Number(e.streamValidUntil) > nowSec).length;
+  const pendingCount    = enriched.filter(e => isPendingStream(e)).length;
   const actionCount     = enriched.filter(e => getStatus(e) === 'action').length;
 
   return (
@@ -329,9 +338,11 @@ export default function CompanyHistory() {
           <p className="text-[10px] text-muted font-mono mt-0.5">
             {sent.length === 0
               ? 'no streams yet'
-              : activeCount === 0
-                ? `${sent.length} ended`
-                : `of ${sent.length} streams`}
+              : activeCount === 0 && pendingCount > 0
+                ? `${pendingCount} pending`
+                : activeCount === 0
+                  ? `${sent.length - pendingCount} ended`
+                  : `of ${sent.length} streams`}
           </p>
         </div>
         <div className="stat-card">
