@@ -219,6 +219,10 @@ export default function CreateStreamModal() {
     verificationTarget: '',
   });
 
+  // Optional hourly calculator. Fills milestoneAmount = rate/hr × hours per period.
+  // The per-period amount stays the source of truth; this is just a convenience.
+  const [hourly, setHourly] = useState({ rate: '', hours: '' });
+
   // When wallet tokens load, auto-select the first one if current selection not in list
   useEffect(() => {
     if (!walletTokens.length) return;
@@ -281,6 +285,7 @@ export default function CreateStreamModal() {
       verificationSource: 'github',
       verificationTarget: '',
     });
+    setHourly({ rate: '', hours: '' });
     setSelectedContractor(null);
     setCreatedStreamId(null);
     closeModal();
@@ -432,6 +437,49 @@ export default function CreateStreamModal() {
                   {walletTokens.length === 0 && !tokensLoading && (
                     <p className="col-span-3 text-xs text-muted">No tokens found on this chain.</p>
                   )}
+                </div>
+              </div>
+
+              {/* Optional hourly calculator */}
+              <div className="rounded-xl border border-border bg-dark/40 p-3">
+                <p className="text-[11px] text-muted mb-2 leading-relaxed">
+                  Bill by the hour? Enter your rate and hours per period and we fill the payment below.
+                </p>
+                <div className="flex gap-2">
+                  <div className="flex-1">
+                    <label className="text-[10px] uppercase tracking-wide text-muted/60 mb-1 block">Rate / hr</label>
+                    <div className="relative">
+                      <input
+                        type="text" inputMode="decimal" value={hourly.rate} placeholder="18"
+                        onChange={e => {
+                          const v = e.target.value;
+                          if (v !== '' && !/^\d*\.?\d*$/.test(v)) return;
+                          const next = { ...hourly, rate: v };
+                          setHourly(next);
+                          const r = parseFloat(next.rate), h = parseFloat(next.hours);
+                          if (r > 0 && h > 0) setForm(f => ({ ...f, milestoneAmount: parseFloat((r * h).toFixed(6)).toString() }));
+                        }}
+                        className="input pr-12 text-sm"
+                      />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted text-[10px] font-mono">{selectedToken.symbol}</span>
+                    </div>
+                  </div>
+                  <div className="flex items-end pb-2.5 text-muted text-xs">×</div>
+                  <div className="flex-1">
+                    <label className="text-[10px] uppercase tracking-wide text-muted/60 mb-1 block">Hours / period</label>
+                    <input
+                      type="text" inputMode="decimal" value={hourly.hours} placeholder="30"
+                      onChange={e => {
+                        const v = e.target.value;
+                        if (v !== '' && !/^\d*\.?\d*$/.test(v)) return;
+                        const next = { ...hourly, hours: v };
+                        setHourly(next);
+                        const r = parseFloat(next.rate), h = parseFloat(next.hours);
+                        if (r > 0 && h > 0) setForm(f => ({ ...f, milestoneAmount: parseFloat((r * h).toFixed(6)).toString() }));
+                      }}
+                      className="input text-sm"
+                    />
+                  </div>
                 </div>
               </div>
 
