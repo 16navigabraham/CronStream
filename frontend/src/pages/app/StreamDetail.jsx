@@ -405,19 +405,13 @@ export default function StreamDetail() {
                   </button>
                 )}
 
-                {/* Sender: cancel while active */}
-                {isSender && isActive && !cancelSuccess && (
-                  <TxButton
-                    label="Cancel stream"
-                    pendingLabel="Confirm cancel…"
-                    confirmingLabel="Cancelling…"
-                    successLabel="✓ Cancelled"
-                    className="btn-danger text-sm py-2 px-4"
-                    onWrite={() => { cancelReset(); handleCancel(); }}
-                    isPending={cancelPending}
-                    isConfirming={cancelConfirming}
-                    isSuccess={cancelSuccess}
-                  />
+                {/* Sender: period is verified and streaming — cancel is locked.
+                    The contractor is guaranteed this period's pay. The company's
+                    exit is at the period boundary via Reclaim, not mid-window. */}
+                {isSender && isActive && (
+                  <span className="text-xs text-muted font-mono">
+                    Period verified - funds locked until it ends
+                  </span>
                 )}
 
                 {/* Sender: reclaim unearned after expiry - only if there IS unearned and not pending */}
