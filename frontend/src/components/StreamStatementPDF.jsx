@@ -404,6 +404,7 @@ export function StreamStatementDocument({
           </View>
           <View style={s.footerRight}>
             <Text>cronstream.xyz</Text>
+            <Text style={{ marginTop: 2 }}>thecronstream@gmail.com</Text>
             <Text style={{ marginTop: 2, color: C.muted }}>Not financial advice. Verify on-chain.</Text>
           </View>
         </View>

@@ -41,7 +41,7 @@ const SECTIONS = [
   },
   {
     title: 'Contact',
-    body: `Questions about these terms? Reach us at build@cronstream.xyz.`,
+    body: `Questions about these terms? Reach us at thecronstream@gmail.com.`,
   },
 ];
 

@@ -29,7 +29,7 @@ const SECTIONS = [
   },
   {
     title: 'Contact',
-    body: `Questions about your data? Reach us at build@cronstream.xyz. We respond within 48 hours.`,
+    body: `Questions about your data? Reach us at thecronstream@gmail.com. We respond within 48 hours.`,
   },
 ];
 

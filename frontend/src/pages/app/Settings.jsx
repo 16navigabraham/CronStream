@@ -396,7 +396,7 @@ export default function Settings() {
               </p>
             </div>
 
-            <a href="mailto:build@cronstream.xyz?subject=Platform%20API%20Application&body=Product%20description%3A%0A%0AExpected%20monthly%20stream%20volume%3A%0A%0AWebsite%20%2F%20GitHub%3A%0A%0AContact%20email%3A"
+            <a href="mailto:thecronstream@gmail.com?subject=Platform%20API%20Application&body=Product%20description%3A%0A%0AExpected%20monthly%20stream%20volume%3A%0A%0AWebsite%20%2F%20GitHub%3A%0A%0AContact%20email%3A"
               className="flex items-center justify-between gap-3 px-4 py-3.5 rounded-xl bg-accent text-dark font-semibold text-sm hover:bg-accent/90 transition-colors">
               <span>Apply for platform access</span>
               <span>→</span>
