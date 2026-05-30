@@ -383,7 +383,7 @@ async function _checkStream({ streamId, chainId, source, target, sender, periodS
     // Only the CONTRACTOR's own work counts — not the company's or anyone
     // else's commits to the repo. Look up the recipient's registered GitHub
     // handle and pass it so pollGitHub ignores everyone else.
-    const recipient = dbRow.recipient ?? onChain.recipient ?? null;
+    const recipient = onChain.recipient ?? null;
     let contractorLogin = null;
     if (recipient) {
       try { contractorLogin = (await getProfile(recipient))?.github ?? null; } catch { /* no profile */ }
