@@ -848,21 +848,25 @@ app.get('/api/v1/u/:username', async (req, res) => {
 //   ratePerSecond: "1234"  (bigint as string)
 // }
 
-// register-stream is intentionally open — no JWT or API key required.
-// Security model: sender/recipient/ratePerSecond/token are always read from
-// the contract, not from the request body. Those fields are immutable on-chain
-// so nobody can forge them. Only verificationSource/verificationTarget/period
-// come from the caller. The worst-case attack (pointing a stream at a wrong
-// repo) is self-defeating: the verification engine checks the contractor's
-// GitHub handle, so only the real contractor's commits unlock payment.
+// register-stream — open endpoint, no auth required.
+// The frontend calls this immediately after the tx confirms with data decoded
+// directly from the StreamCreated event log. We trust it and upsert.
+// When the on-chain event listener fires seconds later it also upserts — the
+// two calls merge cleanly because stream_registry uses ON CONFLICT DO UPDATE.
+// Security: verificationTarget can be set by anyone, but the verification
+// engine gates extensions on the contractor's registered GitHub handle, so
+// pointing a stream at the wrong repo doesn't help an attacker.
 app.post('/api/v1/register-stream', async (req, res) => {
   const {
     streamId,
-    repo,                    // legacy field — kept for backwards compatibility
+    repo,
     verificationSource,
     verificationTarget,
+    recipient,
+    ratePerSecond,
+    token,
     chainId: bodyChainId,
-    extensionDurationSeconds, // = the period length (1 week, 2 weeks, etc.)
+    extensionDurationSeconds,
   } = req.body;
 
   console.log(`[register-stream] ← POST stream=${(streamId ?? '?').slice(0, 12)}… target=${verificationTarget ?? repo ?? 'none'} period=${extensionDurationSeconds ?? 'none'}`);
@@ -871,9 +875,9 @@ app.post('/api/v1/register-stream', async (req, res) => {
   const resolvedChainId = Number(bodyChainId ?? 421614);
 
   const missing = [];
-  if (!streamId)      missing.push('streamId');
-  if (!resolvedTarget) missing.push('verificationTarget');
-  if (!bodyChainId)   missing.push('chainId');
+  if (!streamId)        missing.push('streamId');
+  if (!resolvedTarget)  missing.push('verificationTarget');
+  if (!bodyChainId)     missing.push('chainId');
   if (!extensionDurationSeconds) missing.push('extensionDurationSeconds');
   if (missing.length) {
     console.warn(`[register-stream] ✗ Rejected — missing: ${missing.join(', ')}`);
@@ -882,20 +886,6 @@ app.post('/api/v1/register-stream', async (req, res) => {
 
   if (!/^0x[a-fA-F0-9]{64}$/.test(streamId)) {
     return res.status(400).json({ error: 'Invalid streamId format' });
-  }
-
-  // Read immutable fields from the contract — never trust the caller for these.
-  let onChain;
-  try {
-    const results = await readStreamBatch([streamId], resolvedChainId);
-    onChain = results[0];
-  } catch (err) {
-    console.error('[register-stream] Chain read failed:', err.message);
-    return res.status(502).json({ error: 'Could not read stream from chain' });
-  }
-
-  if (!onChain || onChain.sender === '0x0000000000000000000000000000000000000000') {
-    return res.status(404).json({ error: 'Stream not found on-chain' });
   }
 
   try {
@@ -909,10 +899,10 @@ app.post('/api/v1/register-stream', async (req, res) => {
       githubRepo:         verificationSource === 'github' || !verificationSource ? resolvedTarget : null,
       verificationSource: verificationSource ?? 'github',
       verificationTarget: resolvedTarget,
-      sender:             onChain.sender,
-      recipient:          onChain.recipient,
-      ratePerSecond:      onChain.ratePerSecond?.toString() ?? null,
-      token:              onChain.token,
+      sender:             req.body.sender ?? null,
+      recipient:          recipient ?? null,
+      ratePerSecond:      ratePerSecond ?? null,
+      token:              token ?? null,
       contractAddress,
       periodSeconds:      extensionDurationSeconds ?? null,
     });

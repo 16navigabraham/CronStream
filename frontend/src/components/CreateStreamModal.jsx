@@ -360,12 +360,12 @@ export default function CreateStreamModal() {
           repo:                    form.verificationSource === 'github' ? form.verificationTarget : null,
           verificationSource:      form.verificationSource,
           verificationTarget:      form.verificationTarget,
+          sender:                  address,
           recipient:               recipientAddr,
           ratePerSecond:           ratePerSecond.toString(),
           token:                   form.token,
           extensionDurationSeconds: Number(windowSeconds),
           chainId,
-          authFetch,
         };
         setRegArgs(args);
         const result = await registerStreamWithAgent(args);
