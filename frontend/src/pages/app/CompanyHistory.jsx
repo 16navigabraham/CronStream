@@ -15,6 +15,7 @@ import { CHAIN_TOKENS }            from '../../hooks/useWalletTokens';
 import { useProfile, useAddressLabel } from '../../hooks/useProfile';
 import { useDisplayCurrency }       from '../../hooks/useDisplayCurrency';
 import { useCreateStream }          from '../../context/CreateStreamContext';
+import DownloadStatement            from '../../components/DownloadStatement';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const TOKEN_LABELS = {
@@ -316,9 +317,17 @@ export default function CompanyHistory() {
           <h1 className="text-lg font-bold mb-0.5">Stream Payments</h1>
           <p className="text-xs text-muted">Full ledger of all milestone streams · {sent.length} total</p>
         </div>
-        <button onClick={() => openModal()} className="btn-primary flex items-center gap-1.5 py-1.5 px-3 text-xs">
-          <Plus size={12} /> New stream
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <DownloadStatement
+            streams={enriched}
+            role="company"
+            ownerName={profile?.name ?? profile?.username}
+            ownerAddress={address}
+          />
+          <button onClick={() => openModal()} className="btn-primary flex items-center gap-1.5 py-1.5 px-3 text-xs">
+            <Plus size={12} /> New stream
+          </button>
+        </div>
       </div>
 
       {/* ── KPI cards ────────────────────────────────────────────────────────── */}

@@ -22,7 +22,7 @@ function notifyListeners(address, profile) {
   _listeners.get(address?.toLowerCase())?.forEach(fn => fn(profile));
 }
 
-function fetchFromServer(address) {
+export function fetchFromServer(address) {
   const key = address.toLowerCase();
 
   // 1. Memory cache hit - skip network

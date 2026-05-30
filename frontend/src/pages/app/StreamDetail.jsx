@@ -5,6 +5,7 @@ import { formatUnits } from 'viem';
 import { ArrowLeft, Copy, Check, ExternalLink, Loader2 } from 'lucide-react';
 import { useStreams } from '../../hooks/useStreams';
 import { useAuth }   from '../../context/AuthContext';
+import { useAddressLabel } from '../../hooks/useProfile';
 import { getContractAddress, ROUTER_ABI } from '../../lib/wagmi';
 
 const AGENT_URL = import.meta.env.VITE_AGENT_URL ?? 'http://localhost:3000';
@@ -82,9 +83,7 @@ function DetailRow({ label, value, mono, copy: copyVal, chainId }) {
           onClick={copyVal ? () => doCopy(copyVal) : undefined}
           title={copyVal ? 'Click to copy' : undefined}
         >
-          {typeof value === 'string' && value.startsWith('0x')
-            ? <>{value.slice(0, 8)}…{value.slice(-6)}</>
-            : value}
+          {value}
         </span>
         {copyVal && (
           copied
@@ -143,6 +142,9 @@ export default function StreamDetail() {
   const { sent, received, loading, refresh } = useStreams();
   const allStreams = [...sent, ...received];
   const stream     = allStreams.find(s => s.streamId?.toLowerCase() === id?.toLowerCase());
+
+  const senderLabel    = useAddressLabel(stream?.sender);
+  const recipientLabel = useAddressLabel(stream?.recipient);
 
   // Derive chain / contract address early so hooks below can use them unconditionally.
   // When stream is null (still loading or not found) we fall back to safe defaults.
@@ -371,8 +373,8 @@ export default function StreamDetail() {
 
   // Fix 3: Stream ID removed from detail table - already shown in header chip
   const detailRows = [
-    { label: 'From',            value: sender,    copy: sender,    chainId: streamChainId },
-    { label: 'To',              value: recipient, copy: recipient, chainId: streamChainId },
+    { label: 'From',            value: senderLabel,    copy: sender,    chainId: streamChainId },
+    { label: 'To',              value: recipientLabel, copy: recipient, chainId: streamChainId },
     { label: 'Token',           value: `${tokenLabel} · ${short(token)}`, mono: true },
     { label: 'Rate',            value: `${ratePerDay.toFixed(4)} ${tokenLabel}/day`, mono: true },
     { label: 'Per second',      value: `${formatUnits(ratePerSecond ?? 0n, 6)} ${tokenLabel}`, mono: true },

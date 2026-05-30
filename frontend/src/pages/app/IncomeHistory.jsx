@@ -21,8 +21,9 @@ import {
   useBlockscoutWithdrawals,
   chainHasBlockscout,
 } from '../../hooks/useBlockscoutLogs';
-import WithdrawModal from '../../components/WithdrawModal';
-import LiveBalance   from '../../components/LiveBalance';
+import WithdrawModal        from '../../components/WithdrawModal';
+import LiveBalance          from '../../components/LiveBalance';
+import DownloadStatement    from '../../components/DownloadStatement';
 
 // ─── Token helpers ────────────────────────────────────────────────────────────
 const TOKEN_LABELS = {
@@ -243,14 +244,22 @@ export default function IncomePage() {
           </div>
           <p className="text-xs text-muted">Your earnings across all streams</p>
         </div>
-        <button
-          onClick={() => navigate('/app/history')}
-          className="flex items-center gap-1.5 text-xs text-muted hover:text-white border border-border px-3 py-1.5 rounded-xl transition-colors"
-        >
-          <Clock size={12} />
-          Stream history
-          <ArrowRight size={11} className="opacity-60" />
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <DownloadStatement
+            streams={received}
+            role="contractor"
+            ownerName={profile?.name ?? profile?.username}
+            ownerAddress={address}
+          />
+          <button
+            onClick={() => navigate('/app/history')}
+            className="flex items-center gap-1.5 text-xs text-muted hover:text-white border border-border px-3 py-1.5 rounded-xl transition-colors"
+          >
+            <Clock size={12} />
+            Stream history
+            <ArrowRight size={11} className="opacity-60" />
+          </button>
+        </div>
       </div>
 
       {/* ── Withdrawal chart ──────────────────────────────────────────────── */}
