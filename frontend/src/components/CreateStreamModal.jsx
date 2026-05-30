@@ -348,11 +348,13 @@ export default function CreateStreamModal() {
         const log = createReceipt.logs.find(l => l.address.toLowerCase() === getContractAddress(chainId).toLowerCase());
         if (!log) { setRegStatus('failed'); return; }
 
-        const decoded = decodeEventLog({ abi: [event], data: log.data, topics: log.topics });
-        setCreatedStreamId(decoded.streamId);
+        const { args: eventArgs } = decodeEventLog({ abi: [event], data: log.data, topics: log.topics });
+        const streamId = eventArgs.streamId;
+        if (!streamId) { setRegStatus('failed'); return; }
+        setCreatedStreamId(streamId);
 
         const args = {
-          streamId:                decoded.streamId,
+          streamId,
           repo:                    form.verificationSource === 'github' ? form.verificationTarget : null,
           verificationSource:      form.verificationSource,
           verificationTarget:      form.verificationTarget,
