@@ -137,6 +137,7 @@ export default function StreamDetail() {
   const [idCopied,      setIdCopied]      = useState(false);
   const [agentStatus,   setAgentStatus]   = useState(null); // null | 'registered' | 'unregistered'
   const [registering,   setRegistering]   = useState(false);
+  const [manualTarget,  setManualTarget]  = useState('');
 
   const { sent, received, loading, refresh } = useStreams();
   const allStreams = [...sent, ...received];
@@ -201,6 +202,8 @@ export default function StreamDetail() {
 
   async function registerWithAgent() {
     if (!stream) return;
+    const target = verificationTarget || manualTarget.trim();
+    if (!target) return;
     setRegistering(true);
     try {
       const res = await authFetch(`${AGENT_URL}/api/v1/register-stream`, {
@@ -208,8 +211,8 @@ export default function StreamDetail() {
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
           streamId:                id,
-          verificationSource:      stream.verificationSource,
-          verificationTarget:      stream.verificationTarget,
+          verificationSource:      stream.verificationSource ?? 'github',
+          verificationTarget:      target,
           recipient:               stream.recipient,
           ratePerSecond:           stream.ratePerSecond?.toString(),
           token:                   stream.token,
@@ -217,7 +220,8 @@ export default function StreamDetail() {
           extensionDurationSeconds: stream.periodSeconds ?? 604800,
         }),
       });
-      setAgentStatus(res.ok ? 'registered' : 'unregistered');
+      if (res.ok) { setAgentStatus('registered'); setManualTarget(''); }
+      else setAgentStatus('unregistered');
     } catch {
       setAgentStatus('unregistered');
     } finally {
@@ -463,17 +467,28 @@ export default function StreamDetail() {
               )}
 
               {/* ── Agent registration banner ─────────────────────────────── */}
-              {isSender && agentStatus === 'unregistered' && (
-                <div className="mt-5 bg-yellow-500/5 border border-yellow-500/20 rounded-xl px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-2 justify-between">
+              {/* Shows when: not registered, OR registered but missing verificationTarget */}
+              {isSender && (agentStatus === 'unregistered' || (agentStatus === 'registered' && !verificationTarget)) && (
+                <div className="mt-5 bg-yellow-500/5 border border-yellow-500/20 rounded-xl px-4 py-3 flex flex-col gap-2">
                   <span className="text-xs text-yellow-400 font-mono">
-                    Stream not monitored - agent needs the verification details to watch for work.
+                    {agentStatus === 'unregistered'
+                      ? 'Stream not monitored - agent needs the verification details to watch for work.'
+                      : 'Verification target missing - agent does not know which repo to watch.'}
                   </span>
+                  {!verificationTarget && (
+                    <input
+                      value={manualTarget}
+                      onChange={e => setManualTarget(e.target.value)}
+                      placeholder={stream?.verificationSource === 'github' ? 'owner/repo' : 'Verification target'}
+                      className="input text-xs py-2"
+                    />
+                  )}
                   <button
                     onClick={registerWithAgent}
-                    disabled={registering}
-                    className="btn-outline text-xs py-1.5 px-3 shrink-0 disabled:opacity-50"
+                    disabled={registering || (!verificationTarget && !manualTarget.trim())}
+                    className="btn-outline text-xs py-1.5 px-3 self-start disabled:opacity-50"
                   >
-                    {registering ? 'Registering…' : 'Register with agent'}
+                    {registering ? 'Registering…' : 'Fix registration'}
                   </button>
                 </div>
               )}
