@@ -15,13 +15,13 @@ import helmet    from 'helmet';
 import rateLimit from 'express-rate-limit';
 
 import { verifyMilestone, VerificationError } from './verifyMilestone.js';
+import { checkStream, verifyJiraWebhook, verifyBitbucketWebhook, extendFromEvent } from './verificationEngine.js';
 import { signExtensionVoucher, getSignerAddress } from './agentSigner.js';
 import { submitExtension, getAllBalances, readStreamBatch }   from './chainSubmitter.js';
-import { initDb, isAlreadyProcessed, recordExtension, getExtensionCount, registerStream, getStream, getStreamsByRepo, getStreamsForAddress, getDb, upsertProfile, getProfile, getProfileByUsername, getProfileByApiKey, searchProfiles, isUsernameTaken, addToWaitlist, getWaitlistCount, saveOAuthTokens, disconnectOAuth, saveRepoInstallation, removeRepoInstallation } from './db.js';
+import { initDb, isAlreadyProcessed, recordExtension, getExtensionCount, registerStream, getStream, getStreamsByRepo, getStreamsBySource, getStreamsForAddress, getDb, upsertProfile, getProfile, getProfileByUsername, getProfileByApiKey, searchProfiles, isUsernameTaken, addToWaitlist, getWaitlistCount, saveOAuthTokens, disconnectOAuth, saveRepoInstallation, removeRepoInstallation } from './db.js';
 import { publicProfile } from './encryption.js';
 import publicApiRouter        from './publicApi.js';
 import { startStreamListeners } from './streamListener.js';
-import { checkStream } from './verificationEngine.js';
 import { generateNonce, verifySiwe, issueJwt, verifyJwt, verifyJwtOrApiKey, verifyJwtOrApiKeyOrX402 } from './auth.js';
 
 const app = express();
@@ -235,12 +235,19 @@ app.get('/api/v1/auth/:provider/callback', async (req, res) => {
         });
         const d = await r.json();
         if (!d.access_token) throw new Error('No access_token from Atlassian');
-        // Fetch cloud ID (Jira workspace)
-        const rr   = await fetch('https://api.atlassian.com/oauth/token/accessible-resources', { headers: { Authorization: `Bearer ${d.access_token}`, Accept: 'application/json' } });
-        const sites = await rr.json();
-        const cloudId    = Array.isArray(sites) ? (sites[0]?.id ?? null) : null;
-        const expiresAt  = d.expires_in ? Math.floor(Date.now() / 1000) + d.expires_in : null;
+        const rr      = await fetch('https://api.atlassian.com/oauth/token/accessible-resources', { headers: { Authorization: `Bearer ${d.access_token}`, Accept: 'application/json' } });
+        const sites   = await rr.json();
+        const cloudId   = Array.isArray(sites) ? (sites[0]?.id ?? null) : null;
+        const expiresAt = d.expires_in ? Math.floor(Date.now() / 1000) + d.expires_in : null;
         await saveOAuthTokens(address, 'atlassian', { accessToken: d.access_token, refreshToken: d.refresh_token, cloudId, expiresAt });
+
+        // Auto-register CronStream webhook on this Jira workspace so issue updates
+        // route to the agent without the user touching webhook settings.
+        if (cloudId && process.env.JIRA_WEBHOOK_SECRET) {
+          registerJiraWebhook(cloudId, d.access_token).catch(err =>
+            console.warn(`[oauth:atlassian] Webhook auto-register failed (non-fatal): ${err.message}`),
+          );
+        }
         break;
       }
 
@@ -254,6 +261,8 @@ app.get('/api/v1/auth/:provider/callback', async (req, res) => {
         const d = await r.json();
         if (!d.access_token) throw new Error('No access_token from Bitbucket');
         await saveOAuthTokens(address, 'bitbucket', { accessToken: d.access_token, refreshToken: d.refresh_token });
+        // Bitbucket webhooks are per-repo — registered at stream creation time
+        // when we know the exact repo from verificationTarget.
         break;
       }
 
@@ -710,6 +719,178 @@ app.post('/api/v1/webhook/github', async (req, res, next) => { try {
   return next(err);
 }});
 
+// ─── Webhook auto-registration helpers ───────────────────────────────────────
+
+const AGENT_PUBLIC_URL = process.env.AGENT_PUBLIC_URL ?? 'https://api.cronstream.xyz';
+
+/**
+ * Register CronStream's Jira webhook on an Atlassian Cloud workspace.
+ * Called once per user at Atlassian OAuth callback completion.
+ * Idempotent — if the webhook already exists Jira returns a 200 with the
+ * existing record rather than creating a duplicate.
+ */
+async function registerJiraWebhook(cloudId, accessToken) {
+  const url  = `https://api.atlassian.com/ex/jira/${cloudId}/rest/webhooks/1.0/webhook`;
+  const body = {
+    name:   'CronStream milestone gate',
+    url:    `${AGENT_PUBLIC_URL}/api/v1/webhook/jira`,
+    events: ['jira:issue_updated'],
+    filters: { 'issue-related-events-section': '' },
+    excludeBody: false,
+  };
+  const res = await fetch(url, {
+    method:  'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+    body:    JSON.stringify(body),
+    signal:  AbortSignal.timeout(8000),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Jira webhook registration failed (${res.status}): ${text}`);
+  }
+  const data = await res.json();
+  console.log(`[oauth:atlassian] ✓ Jira webhook registered — id=${data.id} cloudId=${cloudId}`);
+}
+
+/**
+ * Register CronStream's Bitbucket webhook on a specific repository.
+ * Called when a stream with verificationSource=bitbucket is registered.
+ * Uses the company's stored OAuth token to make the API call on their behalf.
+ */
+async function registerBitbucketWebhook(workspace, repoSlug, accessToken) {
+  const url  = `https://api.bitbucket.org/2.0/repositories/${workspace}/${repoSlug}/hooks`;
+  const body = {
+    description: 'CronStream milestone gate',
+    url:         `${AGENT_PUBLIC_URL}/api/v1/webhook/bitbucket`,
+    active:      true,
+    secret:      process.env.BITBUCKET_WEBHOOK_SECRET ?? '',
+    events:      ['pullrequest:fulfilled'],
+  };
+  const res = await fetch(url, {
+    method:  'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+    body:    JSON.stringify(body),
+    signal:  AbortSignal.timeout(8000),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Bitbucket webhook registration failed (${res.status}): ${text}`);
+  }
+  const data = await res.json();
+  console.log(`[register-stream] ✓ Bitbucket webhook registered — uuid=${data.uuid} repo=${workspace}/${repoSlug}`);
+}
+
+// ─── POST /api/v1/webhook/jira ────────────────────────────────────────────────
+// Receives jira:issue_updated events. Verifies signature, runs 3-layer gate,
+// then calls extendFromEvent for each matching stream.
+
+app.use('/api/v1/webhook/jira', express.raw({ type: '*/*', limit: '2mb' }));
+
+app.post('/api/v1/webhook/jira', async (req, res, next) => { try {
+  const rawBody  = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body ?? '');
+  const secret   = process.env.JIRA_WEBHOOK_SECRET;
+  const sigHeader = req.headers['x-hub-signature'] ?? req.headers['x-jira-webhook-signature'] ?? '';
+
+  if (secret && sigHeader) {
+    const expected = `sha256=${crypto.createHmac('sha256', secret).update(rawBody).digest('hex')}`;
+    const valid    = sigHeader.length === expected.length &&
+      crypto.timingSafeEqual(Buffer.from(sigHeader), Buffer.from(expected));
+    if (!valid) return res.status(401).json({ error: 'Invalid Jira webhook signature' });
+  }
+
+  let payload;
+  try { payload = JSON.parse(rawBody.toString()); }
+  catch { return res.status(400).json({ error: 'Invalid JSON' }); }
+
+  const event = payload.webhookEvent;
+  if (event !== 'jira:issue_updated') return res.json({ received: true, status: 'ignored', event });
+
+  const hasStatusChange = payload.changelog?.items?.some(i => i.field === 'status');
+  if (!hasStatusChange) return res.json({ received: true, status: 'ignored', reason: 'no status change' });
+
+  const projectKey = payload.issue?.fields?.project?.key;
+  if (!projectKey) return res.json({ received: true, status: 'ignored', reason: 'no project key' });
+
+  console.log(`[webhook:jira] Issue ${payload.issue?.key} updated in project ${projectKey}`);
+
+  const streams = await getStreamsBySource('jira', projectKey);
+  if (!streams.length) return res.json({ received: true, status: 'skipped', reason: 'no streams for this project' });
+
+  for (const row of streams) {
+    const contractorProfile = await getProfile(row.recipient).catch(() => null);
+    const { ok, eventRef, reason } = verifyJiraWebhook(payload, contractorProfile);
+    if (!ok) {
+      console.log(`[webhook:jira] Stream ${row.stream_id?.slice(0, 10)}… not verified: ${reason}`);
+      continue;
+    }
+    extendFromEvent(row, eventRef, 'jira').catch(err =>
+      console.error(`[webhook:jira] extendFromEvent failed for ${row.stream_id?.slice(0, 10)}…: ${err.message}`),
+    );
+  }
+
+  return res.json({ received: true, status: 'verifying', streams: streams.map(r => r.stream_id) });
+} catch (err) {
+  console.error('[webhook:jira] Unhandled error:', err);
+  return next(err);
+}});
+
+// ─── POST /api/v1/webhook/bitbucket ──────────────────────────────────────────
+// Receives pullrequest:fulfilled events. Runs 3-layer gate (author + diff + pipeline),
+// then calls extendFromEvent for each matching stream.
+
+app.use('/api/v1/webhook/bitbucket', express.raw({ type: '*/*', limit: '2mb' }));
+
+app.post('/api/v1/webhook/bitbucket', async (req, res, next) => { try {
+  const rawBody   = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body ?? '');
+  const secret    = process.env.BITBUCKET_WEBHOOK_SECRET;
+  const sigHeader = req.headers['x-hub-signature'] ?? '';
+
+  if (secret && sigHeader) {
+    const hexSig   = sigHeader.replace(/^sha256=/, '');
+    const expected = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
+    const valid    = hexSig.length === expected.length &&
+      crypto.timingSafeEqual(Buffer.from(hexSig), Buffer.from(expected));
+    if (!valid) return res.status(401).json({ error: 'Invalid Bitbucket webhook signature' });
+  }
+
+  let payload;
+  try { payload = JSON.parse(rawBody.toString()); }
+  catch { return res.status(400).json({ error: 'Invalid JSON' }); }
+
+  const event = req.headers['x-event-key'];
+  if (event !== 'pullrequest:fulfilled') {
+    return res.json({ received: true, status: 'ignored', event });
+  }
+
+  const repoFullName = payload.repository?.full_name;
+  if (!repoFullName) return res.json({ received: true, status: 'ignored', reason: 'no repo' });
+
+  console.log(`[webhook:bitbucket] PR #${payload.pullrequest?.id} merged into ${repoFullName}`);
+
+  const streams = await getStreamsBySource('bitbucket', repoFullName);
+  if (!streams.length) return res.json({ received: true, status: 'skipped', reason: 'no streams for this repo' });
+
+  for (const row of streams) {
+    const [companyProfile, contractorProfile] = await Promise.all([
+      getProfile(row.sender).catch(() => null),
+      getProfile(row.recipient).catch(() => null),
+    ]);
+    const { ok, eventRef, reason } = await verifyBitbucketWebhook(payload, companyProfile, contractorProfile);
+    if (!ok) {
+      console.log(`[webhook:bitbucket] Stream ${row.stream_id?.slice(0, 10)}… not verified: ${reason}`);
+      continue;
+    }
+    extendFromEvent(row, eventRef, 'bitbucket').catch(err =>
+      console.error(`[webhook:bitbucket] extendFromEvent failed for ${row.stream_id?.slice(0, 10)}…: ${err.message}`),
+    );
+  }
+
+  return res.json({ received: true, status: 'verifying', streams: streams.map(r => r.stream_id) });
+} catch (err) {
+  console.error('[webhook:bitbucket] Unhandled error:', err);
+  return next(err);
+}});
+
 // ─── GET /api/v1/username/check/:username ─────────────────────────────────────
 // Returns { available: bool } — called during signup to validate uniqueness.
 
@@ -885,6 +1066,7 @@ app.post('/api/v1/register-stream', async (req, res) => {
     verificationSource,
     verificationTarget,
     recipient,
+    sender,
     ratePerSecond,
     token,
     chainId: bodyChainId,
@@ -934,8 +1116,25 @@ app.post('/api/v1/register-stream', async (req, res) => {
       `source=${verificationSource ?? 'github'} target=${resolvedTarget}`,
     );
 
-    // No per-repo webhook setup needed — the GitHub App installation delivers
-    // events for all granted repos to the app-level webhook automatically.
+    // Auto-register platform webhooks where needed:
+    // - GitHub: handled by the App installation, no per-stream action needed.
+    // - Bitbucket: webhook is per-repo, register now using the company's OAuth token.
+    // - Jira: webhook is per-workspace, registered at OAuth callback — nothing to do here.
+    if (verificationSource === 'bitbucket' && resolvedTarget && process.env.BITBUCKET_WEBHOOK_SECRET) {
+      const parts = resolvedTarget.split('/').filter(Boolean);
+      if (parts.length >= 2) {
+        const [bbWorkspace, bbRepo] = parts;
+        const companyProfile = sender ? await getProfile(sender).catch(() => null) : null;
+        const bbToken = companyProfile?.bitbucket_oauth_token;
+        if (bbToken) {
+          registerBitbucketWebhook(bbWorkspace, bbRepo, bbToken).catch(err =>
+            console.warn(`[register-stream] Bitbucket webhook auto-register failed (non-fatal): ${err.message}`),
+          );
+        } else {
+          console.warn(`[register-stream] No Bitbucket OAuth token for sender ${sender?.slice(0, 8) ?? '?'} — webhook not auto-registered`);
+        }
+      }
+    }
 
     return res.json({
       success: true, streamId,

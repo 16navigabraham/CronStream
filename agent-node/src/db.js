@@ -234,6 +234,24 @@ export async function getStreamsByRepo(repo) {
   return result.rows;
 }
 
+/**
+ * Fetch streams registered for a given verification source + target.
+ * Used by Jira/Bitbucket/Figma webhook handlers to route events.
+ *
+ * @param {string} source - 'jira' | 'bitbucket' | 'figma'
+ * @param {string} target - project key, repo slug, or file ID
+ */
+export async function getStreamsBySource(source, target) {
+  const db = getDb();
+  if (!db) return [];
+  const result = await db.execute({
+    sql:  `SELECT * FROM stream_registry
+           WHERE verification_source = ? AND verification_target = ?`,
+    args: [source, target],
+  });
+  return result.rows;
+}
+
 // ─── Extension History ────────────────────────────────────────────────────────
 
 /**

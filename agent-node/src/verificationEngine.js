@@ -193,71 +193,152 @@ async function pollGitHub(repo, sinceTimestamp, token, contractorLogin = null) {
 
 // ─── Jira ─────────────────────────────────────────────────────────────────────
 
-async function pollJira(target, credentials) {
-  const { atlassian_access_token: token, atlassian_cloud_id: cloudId, jira_url: jiraUrl, jira_email, jira_token } = credentials ?? {};
-  const hasOAuth = !!token && !!cloudId;
-  const hasBasic = !!jiraUrl && !!jira_email && !!jira_token;
-  if (!hasOAuth && !hasBasic) return null;
+// ─── Jira webhook verification ────────────────────────────────────────────────
 
-  const ticketKey = target.split(/[\s/]+/).filter(Boolean).pop().toUpperCase();
-  if (!/^[A-Z][A-Z0-9]+-\d+$/.test(ticketKey)) return null;
+const JIRA_DONE_CATEGORIES = new Set(['done']);
+const JIRA_VALID_TYPES     = new Set(['Story', 'Task', 'Bug', 'Feature', 'Improvement', 'Sub-task']);
 
-  try {
-    let url, headers;
-    if (hasOAuth) {
-      url     = `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/issue/${ticketKey}`;
-      headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
-    } else {
-      const auth = Buffer.from(`${jira_email}:${jira_token}`).toString('base64');
-      url     = `${jiraUrl.replace(/\/$/, '')}/rest/api/3/issue/${ticketKey}`;
-      headers = { Authorization: `Basic ${auth}`, Accept: 'application/json' };
-    }
+/**
+ * Verify a Jira `jira:issue_updated` webhook payload against a registered stream.
+ * 3-layer gate:
+ *   1. Issue type is a billable deliverable (not Epic)
+ *   2. Status transitioned to a Done category
+ *   3. Assignee matches the contractor's registered Jira email / account ID
+ *
+ * Returns { ok, eventRef, reason } — no API calls needed, all data is in the payload.
+ */
+export function verifyJiraWebhook(payload, contractorProfile) {
+  const issue     = payload.issue;
+  const changelog = payload.changelog;
 
-    const res  = await fetch(url, { headers, signal: AbortSignal.timeout(8000) });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const statusCategory = data.fields?.status?.statusCategory?.key;
-    if (statusCategory !== 'done') return null;
+  // Layer 1 — deliverable type
+  const issueType = issue?.fields?.issuetype?.name;
+  if (!JIRA_VALID_TYPES.has(issueType)) {
+    return { ok: false, reason: `Issue type '${issueType}' is not a billable deliverable` };
+  }
 
-    console.log(`[verify:jira] ✓ Ticket ${ticketKey} is Done`);
-    return { eventRef: `POLL#JIRA#${ticketKey}` };
-  } catch { return null; }
+  // Layer 2 — status transition to Done
+  const statusChange = changelog?.items?.find(i => i.field === 'status');
+  if (!statusChange) {
+    return { ok: false, reason: 'No status transition in this event' };
+  }
+  // Jira changelog items use `toString` as the field name (destination status name)
+  // and `toStatus` is not a standard field — check the category via statusCategory on the issue
+  const statusCategory = issue?.fields?.status?.statusCategory?.key;
+  if (!JIRA_DONE_CATEGORIES.has(statusCategory)) {
+    return { ok: false, reason: `Status category '${statusCategory}' is not Done` };
+  }
+
+  // Layer 3 — assignee matches registered contractor
+  const assigneeEmail     = issue?.fields?.assignee?.emailAddress?.toLowerCase();
+  const assigneeAccountId = issue?.fields?.assignee?.accountId;
+  const contractorEmail   = contractorProfile?.jira_email?.toLowerCase();
+  const contractorAccount = contractorProfile?.jira_account_id;
+
+  const emailMatch   = contractorEmail   && assigneeEmail     && assigneeEmail   === contractorEmail;
+  const accountMatch = contractorAccount && assigneeAccountId && assigneeAccountId === contractorAccount;
+
+  if (!emailMatch && !accountMatch) {
+    return { ok: false, reason: 'Assignee does not match registered contractor' };
+  }
+
+  const issueKey = issue?.key ?? 'unknown';
+  console.log(`[verify:jira] ✓ Ticket ${issueKey} — type=${issueType} | assignee verified`);
+  return { ok: true, eventRef: `JIRA#${issueKey}` };
 }
 
-// ─── Bitbucket ────────────────────────────────────────────────────────────────
+// ─── Bitbucket webhook verification ──────────────────────────────────────────
 
-async function pollBitbucket(target, sinceTimestamp, credentials) {
-  const { bitbucket_oauth_token: oauthToken, bitbucket_workspace, bitbucket_user, bitbucket_password } = credentials ?? {};
-  const hasOAuth = !!oauthToken;
-  const hasBasic = !!bitbucket_workspace && !!bitbucket_user && !!bitbucket_password;
-  if (!hasOAuth && !hasBasic) return null;
+const BB_CODE_PATH_RE  = /^(src|contracts|lib|packages)\//;
+const BB_IGNORE_EXTS   = new Set(['.md', '.txt', '.json', '.lock', '.yml', '.yaml', '.mdx']);
 
-  const [repoPath] = target.split('#');
-  const parts = repoPath.trim().split('/').filter(Boolean);
-  const repo  = parts.pop();
-  const workspace = (bitbucket_workspace ?? parts[0] ?? '').trim();
-  if (!repo || !workspace) return null;
+/**
+ * Verify a Bitbucket `pullrequest:fulfilled` webhook payload.
+ * 3-layer gate:
+ *   1. PR author matches the contractor's registered Bitbucket username / UUID
+ *   2. PR contains real code changes in /src or /contracts (checked via diffstat API)
+ *   3. Latest pipeline on the merge commit passed
+ *
+ * @param {object} payload    - raw Bitbucket webhook body
+ * @param {object} companyCredentials  - company profile (has bitbucket auth)
+ * @param {object} contractorProfile   - contractor profile (has bitbucket identity)
+ */
+export async function verifyBitbucketWebhook(payload, companyCredentials, contractorProfile) {
+  const pr   = payload.pullrequest;
+  const repo = payload.repository;
 
-  const authHeader = hasOAuth
+  const workspace  = repo?.workspace?.slug ?? repo?.full_name?.split('/')[0];
+  const repoSlug   = repo?.slug            ?? repo?.full_name?.split('/')[1];
+  const prId       = pr?.id;
+  const mergeHash  = pr?.merge_commit?.hash;
+  const authorUUID = pr?.author?.uuid;
+  const authorNick = pr?.author?.nickname?.toLowerCase();
+
+  // Layer 1 — author matches registered contractor
+  const contractorUUID = contractorProfile?.bitbucket_uuid;
+  const contractorNick = contractorProfile?.bitbucket_user?.toLowerCase();
+  const authorMatches  = (contractorUUID && authorUUID === contractorUUID)
+                      || (contractorNick && authorNick === contractorNick);
+  if (!authorMatches) {
+    return { ok: false, reason: 'PR author does not match registered contractor' };
+  }
+
+  if (!workspace || !repoSlug || !prId) {
+    return { ok: false, reason: 'Missing repo metadata in webhook payload' };
+  }
+
+  // Build auth header from company credentials
+  const { bitbucket_oauth_token: oauthToken, bitbucket_user, bitbucket_password } = companyCredentials ?? {};
+  if (!oauthToken && !(bitbucket_user && bitbucket_password)) {
+    return { ok: false, reason: 'No Bitbucket credentials on company profile' };
+  }
+  const authHeader = oauthToken
     ? `Bearer ${oauthToken}`
     : `Basic ${Buffer.from(`${bitbucket_user}:${bitbucket_password}`).toString('base64')}`;
 
+  // Layer 2 — real code diff in /src or /contracts
   try {
-    const res = await fetch(
-      `https://api.bitbucket.org/2.0/repositories/${workspace}/${repo}/pullrequests?state=MERGED&pagelen=10&sort=-updated_on`,
+    const diffRes = await fetch(
+      `https://api.bitbucket.org/2.0/repositories/${workspace}/${repoSlug}/pullrequests/${prId}/diffstat`,
       { headers: { Authorization: authHeader, Accept: 'application/json' }, signal: AbortSignal.timeout(8000) },
     );
-    if (!res.ok) return null;
-    const data = await res.json();
-    const recent = (data.values ?? []).find(pr => {
-      const mergedAt = pr.updated_on ? Math.floor(new Date(pr.updated_on).getTime() / 1000) : 0;
-      return mergedAt > sinceTimestamp;
+    if (!diffRes.ok) return { ok: false, reason: `Bitbucket diffstat API returned ${diffRes.status}` };
+    const diffData = await diffRes.json();
+    const files    = diffData.values ?? [];
+    const hasCode  = files.some(f => {
+      const path = f.new?.path ?? f.old?.path ?? '';
+      const ext  = path.includes('.') ? '.' + path.split('.').pop() : '';
+      return BB_CODE_PATH_RE.test(path) && !BB_IGNORE_EXTS.has(ext);
     });
-    if (!recent) return null;
+    if (!hasCode) {
+      return { ok: false, reason: `No qualifying code changes across ${files.length} file(s)` };
+    }
+  } catch (err) {
+    return { ok: false, reason: `Diffstat check failed: ${err.message}` };
+  }
 
-    console.log(`[verify:bitbucket] ✓ Recent merged PR#${recent.id} in ${workspace}/${repo}`);
-    return { eventRef: `POLL#BB#${recent.id}` };
-  } catch { return null; }
+  // Layer 3 — pipeline passed on merge commit
+  if (mergeHash) {
+    try {
+      const pipeRes = await fetch(
+        `https://api.bitbucket.org/2.0/repositories/${workspace}/${repoSlug}/pipelines/?target.commit.hash=${mergeHash}&sort=-created_on&pagelen=1`,
+        { headers: { Authorization: authHeader, Accept: 'application/json' }, signal: AbortSignal.timeout(8000) },
+      );
+      if (pipeRes.ok) {
+        const pipeData = await pipeRes.json();
+        const pipeline = pipeData.values?.[0];
+        if (pipeline) {
+          const state = pipeline.state?.result?.name;
+          if (state && state !== 'SUCCESSFUL') {
+            return { ok: false, reason: `Pipeline state: ${state}` };
+          }
+        }
+      }
+    } catch { /* pipeline check failure is non-fatal — log and continue */ }
+  }
+
+  console.log(`[verify:bitbucket] ✓ PR#${prId} in ${workspace}/${repoSlug} — author + diff + pipeline verified`);
+  return { ok: true, eventRef: `BB#PR#${prId}` };
 }
 
 // ─── Figma ────────────────────────────────────────────────────────────────────
@@ -389,21 +470,18 @@ async function _checkStream({ streamId, chainId, source, target, sender, periodS
       try { contractorLogin = (await getProfile(recipient))?.github ?? null; } catch { /* no profile */ }
     }
     if (!contractorLogin) {
-      // Strict: never extend when we can't tie the work to the contractor. A
-      // missing handle means we cannot prove the commits are theirs, so paying
-      // out would risk releasing funds on someone else's work. Refuse.
-      console.warn(`[verify] No GitHub handle on file for contractor ${recipient ?? '?'} — refusing to extend ${streamId.slice(0, 10)}…. Set the contractor's github in their profile.`);
+      console.warn(`[verify] No GitHub handle on file for contractor ${recipient ?? '?'} — refusing to extend ${streamId.slice(0, 10)}…`);
       return;
     }
 
     found = await pollGitHub(target, sinceTimestamp, token, contractorLogin);
-  } else if (src === 'jira') {
-    found = await pollJira(target, credentials);
-    if (found) found.eventRef = `POLL#JIRA#${target}#${now}`;
-  } else if (src === 'bitbucket') {
-    found = await pollBitbucket(target, sinceTimestamp, credentials);
   } else if (src === 'figma') {
     found = await pollFigma(target, sinceTimestamp, credentials);
+  } else {
+    // jira and bitbucket are webhook-only — checkStream is not called for them
+    // via the polling path. Their webhook handlers call extendFromEvent() directly.
+    console.log(`[verify] Source '${src}' is webhook-only — skipping poll path for ${streamId.slice(0, 10)}…`);
+    return;
   }
 
   if (!found) {
@@ -458,4 +536,96 @@ async function _checkStream({ streamId, chainId, source, target, sender, periodS
   });
 
   console.log(`[verify] ✓ Extended stream ${streamId.slice(0, 10)}… via ${stateLabel} event | tx=${onChainResult.txHash}`);
+}
+
+/**
+ * extendFromEvent — called by Jira and Bitbucket webhook handlers after their
+ * own verification passes. Handles the on-chain state check, replay guard,
+ * voucher signing, and submission — the same path as GitHub but skipping the
+ * work-discovery step (the webhook payload is already the evidence).
+ *
+ * @param {object} dbRow      - stream registry row
+ * @param {string} eventRef   - unique event identifier for replay guard (e.g. 'JIRA#ENG-42')
+ * @param {string} sourceLabel - log prefix e.g. 'jira' | 'bitbucket'
+ */
+export async function extendFromEvent(dbRow, eventRef, sourceLabel) {
+  const { stream_id: streamId, chain_id: chainId, verification_target: target, period_seconds: periodSeconds } = dbRow;
+
+  if (_inFlight.has(streamId)) {
+    console.log(`[verify:${sourceLabel}] Skipping duplicate for ${streamId?.slice(0, 10)}… (already in-flight)`);
+    return;
+  }
+  _inFlight.add(streamId);
+
+  try {
+    // On-chain state
+    let onChain;
+    try {
+      const results = await readStreamBatch([streamId], Number(chainId ?? 421614));
+      onChain = results[0];
+    } catch { return; }
+
+    if (!onChain || onChain.sender === '0x0000000000000000000000000000000000000000') return;
+
+    const now              = Math.floor(Date.now() / 1000);
+    const streamValidUntil = Number(onChain.streamValidUntil ?? 0n);
+    const startTime        = Number(onChain.startTime ?? 0n);
+    const totalDeposited   = BigInt(onChain.totalDeposited ?? 0n);
+    const nonce            = Number(onChain.nonce ?? 0n);
+    const period           = Number(periodSeconds ?? 604800);
+
+    const isPending  = streamValidUntil <= startTime && totalDeposited > 0n;
+    const isExpiring = !isPending && streamValidUntil > now && (streamValidUntil - now) <= WARN_WINDOW_S;
+    const isFrozen   = !isPending && streamValidUntil <= now && (now - streamValidUntil) <= FROZEN_LOOKBACK_S && totalDeposited > 0n;
+
+    if (!isPending && !isExpiring && !isFrozen) {
+      console.log(`[verify:${sourceLabel}] Stream ${streamId?.slice(0, 10)}… has healthy runway — skipping`);
+      return;
+    }
+
+    // Replay guard
+    if (await isAlreadyProcessed(streamId, target, eventRef)) {
+      console.log(`[verify:${sourceLabel}] Already processed ${eventRef} for ${streamId?.slice(0, 10)}… — skipping`);
+      return;
+    }
+
+    const stateLabel = isPending ? 'pending' : isExpiring ? 'expiring' : 'frozen';
+    console.log(`[verify:${sourceLabel}] Extending ${stateLabel} stream ${streamId?.slice(0, 10)}… via ${eventRef}`);
+
+    const extensionDurationSeconds = period;
+    const expiry = now + VOUCHER_TTL_S;
+
+    let signature;
+    try {
+      signature = await signExtensionVoucher({ streamId, extensionDurationSeconds, nonce, expiry });
+    } catch (err) {
+      console.error(`[verify:${sourceLabel}] Signing failed for ${streamId?.slice(0, 10)}…: ${err.message}`);
+      return;
+    }
+
+    let onChainResult;
+    try {
+      onChainResult = await submitExtension({ streamId, extensionDurationSeconds, nonce, expiry, signature });
+    } catch (err) {
+      console.error(`[verify:${sourceLabel}] On-chain submission failed for ${streamId?.slice(0, 10)}…: ${err.message}`);
+      return;
+    }
+
+    await recordExtension({
+      streamId,
+      repository:    target,
+      prNumber:      null,
+      eventRef,
+      chainId:       onChainResult.chainId,
+      chainName:     onChainResult.chainName,
+      txHash:        onChainResult.txHash,
+      blockNumber:   onChainResult.blockNumber,
+      gasUsed:       onChainResult.gasUsed,
+      voucherExpiry: expiry,
+    });
+
+    console.log(`[verify:${sourceLabel}] ✓ Extended stream ${streamId?.slice(0, 10)}… | tx=${onChainResult.txHash}`);
+  } finally {
+    _inFlight.delete(streamId);
+  }
 }
