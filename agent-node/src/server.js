@@ -636,13 +636,17 @@ app.post('/api/v1/webhook/github', async (req, res, next) => { try {
   // on the same repo). Without it, the agent checks all streams for the repo.
   let metaBody = '';
   if (event === 'pull_request') {
-    metaBody = payload.pull_request?.body ?? '';
+    // Search PR title + body + all commit messages attached to the event
+    const prTitle  = payload.pull_request?.title ?? '';
+    const prBody   = payload.pull_request?.body  ?? '';
+    metaBody = `${prTitle}\n${prBody}`;
   } else {
-    const headCommit = payload.head_commit ?? payload.commits?.[0];
-    metaBody = headCommit?.message ?? '';
+    // Push: scan all commits in the push, not just the head commit
+    const commits  = payload.commits ?? (payload.head_commit ? [payload.head_commit] : []);
+    metaBody = commits.map(c => c.message ?? '').join('\n');
   }
-  const streamIdMatch = metaBody.match(/CronStream-Stream-Id:\s*(0x[a-fA-F0-9]{64})/i);
-  const hintedStreamId = streamIdMatch?.[1] ?? null;
+  const hintedStreamIds = [...metaBody.matchAll(/CronStream-Stream-Id:\s*(0x[a-fA-F0-9]{64})/gi)]
+    .map(m => m[1]);
 
   // ── Fire verification ──────────────────────────────────────────────────────
   // checkStream re-reads on-chain state and re-verifies the work itself, then
@@ -651,13 +655,16 @@ app.post('/api/v1/webhook/github', async (req, res, next) => { try {
   // Runs async (fire-and-forget) so GitHub gets a fast 2xx within its timeout.
   let toVerify = [];
 
-  if (hintedStreamId) {
-    const row = await getStream(hintedStreamId);
-    if (row) {
-      console.log(`[webhook] Stream ID in commit — routing directly to ${hintedStreamId.slice(0, 10)}…`);
-      toVerify = [row];
-    } else {
-      console.warn(`[webhook] Hinted stream ${hintedStreamId.slice(0, 10)}… not in registry — falling back to repo lookup`);
+  if (hintedStreamIds.length) {
+    const rows = await Promise.all(hintedStreamIds.map(id => getStream(id)));
+    const found = rows.filter(Boolean);
+    const missing = hintedStreamIds.filter((id, i) => !rows[i]);
+    if (found.length) {
+      console.log(`[webhook] Stream IDs in commit — routing to ${found.length} stream(s): ${found.map(r => r.stream_id.slice(0, 10) + '…').join(', ')}`);
+      toVerify = found;
+    }
+    if (missing.length) {
+      console.warn(`[webhook] ${missing.length} hinted stream(s) not in registry — skipping: ${missing.map(id => id.slice(0, 10) + '…').join(', ')}`);
     }
   }
 

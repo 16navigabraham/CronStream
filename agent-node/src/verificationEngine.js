@@ -299,10 +299,28 @@ async function pollFigma(target, sinceTimestamp, credentials) {
 
 // ─── Core verification ─────────────────────────────────────────────────────────
 
+// Prevents duplicate concurrent checks when both `pull_request.closed` and `push`
+// events arrive within milliseconds of each other for the same merge.
+const _inFlight = new Set();
+
 export async function checkStream(dbRow) {
   const { stream_id: streamId, chain_id: chainId, verification_source: source, verification_target: target, sender, period_seconds: periodSeconds } = dbRow;
   if (!target || !sender) return;
 
+  if (_inFlight.has(streamId)) {
+    console.log(`[verify] Skipping duplicate check for ${streamId?.slice(0, 10)}… (already in-flight)`);
+    return;
+  }
+  _inFlight.add(streamId);
+
+  try {
+    await _checkStream({ streamId, chainId, source, target, sender, periodSeconds });
+  } finally {
+    _inFlight.delete(streamId);
+  }
+}
+
+async function _checkStream({ streamId, chainId, source, target, sender, periodSeconds }) {
   // Read on-chain state
   let onChain;
   try {

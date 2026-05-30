@@ -213,7 +213,7 @@ function _shortAddr(addr) {
 export function useAddressLabel(address) {
   const { profile } = useProfile(address);
   if (!address) return '-';
-  if (profile?.username) return `@${profile.username}`;
   if (profile?.name)     return profile.name;
+  if (profile?.username) return profile.username;
   return _shortAddr(address);
 }
