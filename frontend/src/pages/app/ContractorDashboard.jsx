@@ -565,6 +565,7 @@ export default function ContractorDashboard() {
                   {fmtRaw(totalClaimable)}
                 </p>
               )}
+              <p className="text-[9px] text-muted/50 mt-0.5">withdrawable now</p>
             </div>
           </div>
           <ArrowRight size={13} className="text-muted group-hover:text-accent transition-colors shrink-0" />
@@ -585,6 +586,7 @@ export default function ContractorDashboard() {
                   {fmtRaw(totalWithdrawn)}
                 </p>
               )}
+              <p className="text-[9px] text-muted/50 mt-0.5">total paid out</p>
             </div>
           </div>
           <ArrowRight size={13} className="text-muted group-hover:text-accent transition-colors shrink-0" />
