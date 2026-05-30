@@ -848,33 +848,32 @@ app.get('/api/v1/u/:username', async (req, res) => {
 //   ratePerSecond: "1234"  (bigint as string)
 // }
 
-app.post('/api/v1/register-stream', devAuth(getProfileByApiKey), async (req, res) => {
+// register-stream is intentionally open — no JWT or API key required.
+// Security model: sender/recipient/ratePerSecond/token are always read from
+// the contract, not from the request body. Those fields are immutable on-chain
+// so nobody can forge them. Only verificationSource/verificationTarget/period
+// come from the caller. The worst-case attack (pointing a stream at a wrong
+// repo) is self-defeating: the verification engine checks the contractor's
+// GitHub handle, so only the real contractor's commits unlock payment.
+app.post('/api/v1/register-stream', async (req, res) => {
   const {
     streamId,
     repo,                    // legacy field — kept for backwards compatibility
     verificationSource,
     verificationTarget,
-    recipient,
-    ratePerSecond,
-    token,
     chainId: bodyChainId,
     extensionDurationSeconds, // = the period length (1 week, 2 weeks, etc.)
   } = req.body;
 
   console.log(`[register-stream] ← POST stream=${(streamId ?? '?').slice(0, 12)}… target=${verificationTarget ?? repo ?? 'none'} period=${extensionDurationSeconds ?? 'none'}`);
 
-  // Accept either new-style verificationTarget or legacy repo field
-  const resolvedTarget = verificationTarget ?? repo ?? null;
+  const resolvedTarget  = verificationTarget ?? repo ?? null;
+  const resolvedChainId = Number(bodyChainId ?? 421614);
 
-  // ── Every field is mandatory — a stream the agent can't fully verify is
-  //    useless, and missing fields are what broke the first stream we shipped. ──
   const missing = [];
-  if (!streamId)                 missing.push('streamId');
-  if (!resolvedTarget)           missing.push('verificationTarget');
-  if (!recipient)                missing.push('recipient');
-  if (!ratePerSecond)            missing.push('ratePerSecond');
-  if (!token)                    missing.push('token');
-  if (!bodyChainId)              missing.push('chainId');
+  if (!streamId)      missing.push('streamId');
+  if (!resolvedTarget) missing.push('verificationTarget');
+  if (!bodyChainId)   missing.push('chainId');
   if (!extensionDurationSeconds) missing.push('extensionDurationSeconds');
   if (missing.length) {
     console.warn(`[register-stream] ✗ Rejected — missing: ${missing.join(', ')}`);
@@ -884,15 +883,22 @@ app.post('/api/v1/register-stream', devAuth(getProfileByApiKey), async (req, res
   if (!/^0x[a-fA-F0-9]{64}$/.test(streamId)) {
     return res.status(400).json({ error: 'Invalid streamId format' });
   }
-  if (!/^0x[a-fA-F0-9]{40}$/.test(recipient)) {
-    return res.status(400).json({ error: 'Invalid recipient address' });
+
+  // Read immutable fields from the contract — never trust the caller for these.
+  let onChain;
+  try {
+    const results = await readStreamBatch([streamId], resolvedChainId);
+    onChain = results[0];
+  } catch (err) {
+    console.error('[register-stream] Chain read failed:', err.message);
+    return res.status(502).json({ error: 'Could not read stream from chain' });
   }
-  if (!/^0x[a-fA-F0-9]{40}$/.test(token)) {
-    return res.status(400).json({ error: 'Invalid token address' });
+
+  if (!onChain || onChain.sender === '0x0000000000000000000000000000000000000000') {
+    return res.status(404).json({ error: 'Stream not found on-chain' });
   }
 
   try {
-    const resolvedChainId = bodyChainId ?? 421614;
     const contractAddress = resolvedChainId === 46630
       ? (process.env.CONTRACT_ADDRESS_ROBINHOOD  || process.env.CONTRACT_ADDRESS || null)
       : (process.env.CONTRACT_ADDRESS_ARB_SEPOLIA || process.env.CONTRACT_ADDRESS || null);
@@ -903,10 +909,10 @@ app.post('/api/v1/register-stream', devAuth(getProfileByApiKey), async (req, res
       githubRepo:         verificationSource === 'github' || !verificationSource ? resolvedTarget : null,
       verificationSource: verificationSource ?? 'github',
       verificationTarget: resolvedTarget,
-      sender:             req.callerAddress ?? null,
-      recipient:          recipient ?? null,
-      ratePerSecond:      ratePerSecond ?? null,
-      token:              token ?? null,
+      sender:             onChain.sender,
+      recipient:          onChain.recipient,
+      ratePerSecond:      onChain.ratePerSecond?.toString() ?? null,
+      token:              onChain.token,
       contractAddress,
       periodSeconds:      extensionDurationSeconds ?? null,
     });
