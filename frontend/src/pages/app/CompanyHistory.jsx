@@ -102,9 +102,11 @@ function StreamRow({ s, chainId, navigate }) {
   const earned      = balance + withdrawn;
   const unearned    = deposited > earned ? deposited - earned : 0n;
 
-  const endDate = s.streamValidUntil > 0n
-    ? new Date(Number(s.streamValidUntil) * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
-    : '-';
+  const endDate = isPendingStream(s)
+    ? null
+    : s.streamValidUntil > 0n
+      ? new Date(Number(s.streamValidUntil) * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+      : null;
 
   // Settlement column - what the company cares about financially
   let settlAmt   = null;
@@ -162,8 +164,11 @@ function StreamRow({ s, chainId, navigate }) {
         <p className="text-[10px] text-muted font-mono mt-0.5 truncate">
           {ratePerDay > 0 ? `${ratePerDay.toFixed(2)} ${sym ?? '?'}/day` : '-'}
           {' · '}
-          {status === 'active' ? 'expires ' : 'ended '}
-          {endDate}
+          {isPendingStream(s)
+            ? 'awaiting first push'
+            : endDate
+              ? `${status === 'active' ? 'expires' : 'ended'} ${endDate}`
+              : '-'}
         </p>
       </div>
 

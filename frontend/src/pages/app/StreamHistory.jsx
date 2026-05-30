@@ -255,9 +255,11 @@ export default function StreamHistory() {
               const { symbol: sym, decimals: dec } = tokenMeta(streamChainId, s.token);
               const ratePerDay = parseFloat(formatUnits(s.ratePerSecond  ?? 0n, dec)) * 86400;
               const withdrawn  = parseFloat(formatUnits(s.totalWithdrawn ?? 0n, dec));
-              const expiredAt  = s.streamValidUntil > 0n
-                ? new Date(Number(s.streamValidUntil) * 1000).toLocaleDateString()
-                : '-';
+              const expiredAt  = status === 'pending'
+                ? 'awaiting first push'
+                : s.streamValidUntil > 0n
+                  ? `ended ${new Date(Number(s.streamValidUntil) * 1000).toLocaleDateString()}`
+                  : '-';
 
               return (
                 <div

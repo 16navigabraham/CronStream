@@ -407,14 +407,16 @@ export default function CompanyDashboard() {
             </div>
             <div>
               <p className="font-medium mb-1 text-sm">
-                {sent.length > 0 ? 'No active streams' : 'No streams yet'}
+                {pendingStreams.length > 0 ? 'No active streams yet' : sent.length > 0 ? 'No active streams' : 'No streams yet'}
               </p>
               <p className="text-muted text-xs max-w-xs leading-relaxed">
                 {reclaimableStreams.length > 0
                   ? `${reclaimableStreams.length} expired stream${reclaimableStreams.length > 1 ? 's have' : ' has'} unearned funds - go to History to reclaim them.`
-                  : sent.length > 0
-                    ? 'All streams have ended. Start a new one to begin paying.'
-                    : 'Search for a contractor above or tap New Stream to start paying per second.'}
+                  : pendingStreams.length > 0
+                    ? `${pendingStreams.length} stream${pendingStreams.length > 1 ? 's are' : ' is'} waiting for the contractor's first verified push.`
+                    : sent.length > 0
+                      ? 'All streams have ended. Start a new one to begin paying.'
+                      : 'Search for a contractor above or tap New Stream to start paying per second.'}
               </p>
             </div>
             <button className="btn-primary text-sm mt-1 flex items-center gap-2" onClick={() => openModal()}>
