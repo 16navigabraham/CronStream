@@ -56,6 +56,7 @@ export async function registerStreamWithAgent({
   ratePerSecond,
   token,
   extensionDurationSeconds,
+  hoursPerWeek,
   chainId,
   authFetch,               // kept for API compat but not required - endpoint is open
 }) {
@@ -74,6 +75,7 @@ export async function registerStreamWithAgent({
         ratePerSecond,
         token,
         extensionDurationSeconds,
+        hoursPerWeek: hoursPerWeek != null ? Number(hoursPerWeek) : undefined,
         chainId,
       }),
     });

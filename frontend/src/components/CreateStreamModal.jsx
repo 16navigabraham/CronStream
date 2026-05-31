@@ -363,6 +363,7 @@ export default function CreateStreamModal() {
           ratePerSecond:           ratePerSecond.toString(),
           token:                   form.token,
           extensionDurationSeconds: Number(windowSeconds),
+          hoursPerWeek:            parseFloat(hourly.hours) > 0 ? parseFloat(hourly.hours) : undefined,
           chainId,
         };
         setRegArgs(args);

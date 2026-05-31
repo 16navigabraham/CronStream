@@ -1071,9 +1071,10 @@ app.post('/api/v1/register-stream', async (req, res) => {
     token,
     chainId: bodyChainId,
     extensionDurationSeconds,
+    hoursPerWeek,
   } = req.body;
 
-  console.log(`[register-stream] ← POST stream=${(streamId ?? '?').slice(0, 12)}… target=${verificationTarget ?? repo ?? 'none'} period=${extensionDurationSeconds ?? 'none'}`);
+  console.log(`[register-stream] ← POST stream=${(streamId ?? '?').slice(0, 12)}… target=${verificationTarget ?? repo ?? 'none'} period=${extensionDurationSeconds ?? 'none'} hrs/wk=${hoursPerWeek ?? 'none'}`);
 
   const resolvedTarget  = verificationTarget ?? repo ?? null;
   const resolvedChainId = Number(bodyChainId ?? 421614);
@@ -1109,6 +1110,7 @@ app.post('/api/v1/register-stream', async (req, res) => {
       token:              token ?? null,
       contractAddress,
       periodSeconds:      extensionDurationSeconds ?? null,
+      hoursPerWeek:       hoursPerWeek != null ? Number(hoursPerWeek) : null,
     });
 
     console.log(

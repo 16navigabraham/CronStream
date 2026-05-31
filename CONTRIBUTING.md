@@ -106,11 +106,24 @@ npm run dev            # http://localhost:5173
 
 ---
 
+## Contributor License Agreement
+
+By submitting a pull request you agree to the [CronStream CLA](https://cla-assistant.io/16navigabraham/CronStream), which assigns ownership of contributed code to CronStream.
+
+[![CLA assistant](https://cla-assistant.io/readme/badge/16navigabraham/CronStream)](https://cla-assistant.io/16navigabraham/CronStream)
+
+---
+
 ## Security
 
 **Do not open a public issue for security vulnerabilities.**
 
-Report privately by contacting the maintainers directly. Include:
+Report privately by contacting the maintainers directly:
+
+- **Email:** thecronstream@gmail.com
+- **Telegram:** [@AbrahamNA_VIG](https://t.me/AbrahamNA_VIG)
+
+Include:
 
 - Description of the vulnerability
 - Steps to reproduce

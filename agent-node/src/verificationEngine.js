@@ -385,7 +385,7 @@ async function pollFigma(target, sinceTimestamp, credentials) {
 const _inFlight = new Set();
 
 export async function checkStream(dbRow) {
-  const { stream_id: streamId, chain_id: chainId, verification_source: source, verification_target: target, sender, period_seconds: periodSeconds } = dbRow;
+  const { stream_id: streamId, chain_id: chainId, verification_source: source, verification_target: target, sender, period_seconds: periodSeconds, hours_per_week: hoursPerWeek } = dbRow;
   if (!target || !sender) return;
 
   if (_inFlight.has(streamId)) {
@@ -395,13 +395,13 @@ export async function checkStream(dbRow) {
   _inFlight.add(streamId);
 
   try {
-    await _checkStream({ streamId, chainId, source, target, sender, periodSeconds });
+    await _checkStream({ streamId, chainId, source, target, sender, periodSeconds, hoursPerWeek });
   } finally {
     _inFlight.delete(streamId);
   }
 }
 
-async function _checkStream({ streamId, chainId, source, target, sender, periodSeconds }) {
+async function _checkStream({ streamId, chainId, source, target, sender, periodSeconds, hoursPerWeek }) {
   // Read on-chain state
   let onChain;
   try {
@@ -417,10 +417,12 @@ async function _checkStream({ streamId, chainId, source, target, sender, periodS
   const totalDeposited   = BigInt(onChain.totalDeposited ?? 0n);
   const nonce            = Number(onChain.nonce ?? 0n);
 
-  // Period length — falls back to the agent default if not stored on the stream
-  // Every stream stores its own period_seconds at registration. The 1-week
-  // constant is only a last-resort guard for legacy rows missing the field.
+  // Extension window = one full period (weekly, bi-weekly, or monthly — whatever the company set).
+  // A verified event unlocks exactly one period of streaming so the contractor receives the agreed
+  // payout amount. The state machine (isPending / isExpiring / isFrozen) prevents stacking:
+  // a stream with healthy runway is skipped, so extensions top up roughly once per period.
   const period = Number(periodSeconds ?? 604800);
+  const extensionSeconds = period;
 
   const isPending  = streamValidUntil <= startTime && totalDeposited > 0n;
   const isExpiring = !isPending && streamValidUntil > now && (streamValidUntil - now) <= WARN_WINDOW_S;
@@ -498,10 +500,7 @@ async function _checkStream({ streamId, chainId, source, target, sender, periodS
     return;
   }
 
-  // Sign voucher — open a window for exactly one period (the stream's own
-  // configured length), not a global default. This keeps the on-chain window
-  // matched to what the company set up.
-  const extensionDurationSeconds = period;
+  const extensionDurationSeconds = extensionSeconds;
   const expiry = Math.floor(Date.now() / 1000) + VOUCHER_TTL_S;
 
   let signature;
@@ -549,7 +548,7 @@ async function _checkStream({ streamId, chainId, source, target, sender, periodS
  * @param {string} sourceLabel - log prefix e.g. 'jira' | 'bitbucket'
  */
 export async function extendFromEvent(dbRow, eventRef, sourceLabel) {
-  const { stream_id: streamId, chain_id: chainId, verification_target: target, period_seconds: periodSeconds } = dbRow;
+  const { stream_id: streamId, chain_id: chainId, verification_target: target, period_seconds: periodSeconds, hours_per_week: hoursPerWeek } = dbRow;
 
   if (_inFlight.has(streamId)) {
     console.log(`[verify:${sourceLabel}] Skipping duplicate for ${streamId?.slice(0, 10)}… (already in-flight)`);
@@ -573,6 +572,7 @@ export async function extendFromEvent(dbRow, eventRef, sourceLabel) {
     const totalDeposited   = BigInt(onChain.totalDeposited ?? 0n);
     const nonce            = Number(onChain.nonce ?? 0n);
     const period           = Number(periodSeconds ?? 604800);
+    const extensionSeconds = period;
 
     const isPending  = streamValidUntil <= startTime && totalDeposited > 0n;
     const isExpiring = !isPending && streamValidUntil > now && (streamValidUntil - now) <= WARN_WINDOW_S;
@@ -590,9 +590,9 @@ export async function extendFromEvent(dbRow, eventRef, sourceLabel) {
     }
 
     const stateLabel = isPending ? 'pending' : isExpiring ? 'expiring' : 'frozen';
-    console.log(`[verify:${sourceLabel}] Extending ${stateLabel} stream ${streamId?.slice(0, 10)}… via ${eventRef}`);
+    console.log(`[verify:${sourceLabel}] Extending ${stateLabel} stream ${streamId?.slice(0, 10)}… via ${eventRef} (${extensionSeconds}s)`);
 
-    const extensionDurationSeconds = period;
+    const extensionDurationSeconds = extensionSeconds;
     const expiry = now + VOUCHER_TTL_S;
 
     let signature;

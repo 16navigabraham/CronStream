@@ -155,6 +155,9 @@ export async function initDb() {
     // period_seconds — each stream's configured period length, so the agent
     // knows when a full period has elapsed (pay-in-arrears verification model)
     'ALTER TABLE stream_registry ADD COLUMN period_seconds INTEGER',
+    // hours_per_week — used to calculate per-event extension (one day of work)
+    // instead of extending by the full period on every verified event
+    'ALTER TABLE stream_registry ADD COLUMN hours_per_week REAL',
   ];
   for (const sql of migrations) {
     try { await db.execute(sql); } catch { /* column already exists */ }
@@ -297,12 +300,13 @@ export async function getExtensionCount() {
  * @param {string}  [params.recipient]            — contractor wallet address
  * @param {string}  [params.token]                — ERC-20 token address
  * @param {string}  [params.ratePerSecond]        — immutable rate (BigInt as string)
+ * @param {number}  [params.hoursPerWeek]         — hrs/week from the create stream form
  */
 export async function registerStream({
   streamId, chainId, githubRepo,
   verificationSource, verificationTarget,
   sender, recipient, token, ratePerSecond,
-  contractAddress, periodSeconds,
+  contractAddress, periodSeconds, hoursPerWeek,
 }) {
   const db = getDb();
   if (!db) return;
@@ -313,8 +317,8 @@ export async function registerStream({
 
   await db.execute({
     sql: `INSERT INTO stream_registry
-            (stream_id, chain_id, github_repo, verification_source, verification_target, sender, recipient, token, rate_per_second, contract_address, period_seconds)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (stream_id, chain_id, github_repo, verification_source, verification_target, sender, recipient, token, rate_per_second, contract_address, period_seconds, hours_per_week)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT (stream_id) DO UPDATE SET
             verification_source = COALESCE(excluded.verification_source, stream_registry.verification_source),
             verification_target = COALESCE(excluded.verification_target, stream_registry.verification_target),
@@ -324,7 +328,8 @@ export async function registerStream({
             token               = COALESCE(excluded.token,               stream_registry.token),
             rate_per_second     = COALESCE(excluded.rate_per_second,     stream_registry.rate_per_second),
             contract_address    = COALESCE(excluded.contract_address,    stream_registry.contract_address),
-            period_seconds      = COALESCE(excluded.period_seconds,      stream_registry.period_seconds)`,
+            period_seconds      = COALESCE(excluded.period_seconds,      stream_registry.period_seconds),
+            hours_per_week      = COALESCE(excluded.hours_per_week,      stream_registry.hours_per_week)`,
     args: [
       streamId, chainId,
       githubRepo ?? finalTarget,
@@ -334,6 +339,7 @@ export async function registerStream({
       ratePerSecond != null ? String(ratePerSecond) : null,
       contractAddress ?? null,
       periodSeconds != null ? Number(periodSeconds) : null,
+      hoursPerWeek != null ? Number(hoursPerWeek) : null,
     ],
   });
 }
