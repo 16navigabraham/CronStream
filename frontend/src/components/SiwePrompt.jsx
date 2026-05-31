@@ -10,23 +10,23 @@ import { useAuth } from '../context/AuthContext';
 import { useAccount } from 'wagmi';
 
 export default function SiwePrompt() {
-  const { isAuthed, signing, signIn } = useAuth();
+  const { isAuthed, signing, signIn, signError } = useAuth();
   const { isConnected } = useAccount();
 
-  // Nothing to show while authed, not connected, or actively signing
-  if (isAuthed || !isConnected || signing) return null;
+  if (isAuthed || !isConnected) return null;
 
   return (
     <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3
                     bg-surface border border-border rounded-xl px-4 py-2.5 shadow-lg
                     text-xs text-muted font-mono whitespace-nowrap">
-      <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 shrink-0" />
-      Wallet signature needed
+      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${signError ? 'bg-red-400' : 'bg-yellow-400'}`} />
+      {signError ? signError : 'Wallet signature needed'}
       <button
         onClick={signIn}
-        className="text-accent hover:underline ml-1"
+        disabled={signing}
+        className="text-accent hover:underline ml-1 disabled:opacity-40"
       >
-        Sign now
+        {signing ? 'Signing…' : 'Sign now'}
       </button>
     </div>
   );

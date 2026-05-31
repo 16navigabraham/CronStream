@@ -30,13 +30,13 @@ const VOUCHER_TTL_S     = Number(process.env.VOUCHER_TTL_SECONDS ?? 3600);
 
 async function ghGet(path, token) {
   const t = token ?? process.env.GITHUB_TOKEN;
-  if (!t) throw new Error('No GitHub token available for polling');
+  if (!t) throw new Error('No GitHub token available');
   const res = await fetch(`${GITHUB_API_BASE}${path}`, {
     headers: {
       Authorization:          `Bearer ${t}`,
       Accept:                 'application/vnd.github+json',
       'X-GitHub-Api-Version': '2022-11-28',
-      'User-Agent':           'CronStream-Agent-Poller/1.0',
+      'User-Agent':           'CronStream-Agent/1.0',
     },
     signal: AbortSignal.timeout(8000),
   });
@@ -52,143 +52,70 @@ function hasQualifyingDiff(files) {
   );
 }
 
+// ─── GitHub webhook verification ─────────────────────────────────────────────
+
 /**
- * Poll GitHub for merged PRs with passing CI since sinceTimestamp.
- * Only work authored by contractorLogin counts (when provided).
- * Returns a synthetic webhook payload if qualifying work is found, else null.
+ * Verify a GitHub pull_request.closed (merged) webhook payload.
+ * Only PR merges count — direct commits are excluded because they have no
+ * company approval gate (a merged PR requires someone to review and merge it).
+ *
+ * 3-layer gate:
+ *   1. PR author matches the contractor's registered GitHub handle
+ *   2. PR contains qualifying code changes in /src or /contracts
+ *   3. CI passed on the merge commit (skipped if no CI runs exist)
+ *
+ * @param {object} payload            - GitHub pull_request webhook payload
+ * @param {object} contractorProfile  - contractor profile row (needs .github handle)
+ * @param {string} token              - GitHub installation token for API calls
+ * @returns {{ ok: boolean, eventRef?: string, prNumber?: number, reason?: string }}
  */
-async function pollGitHub(repo, sinceTimestamp, token, contractorLogin = null) {
-  const [owner, repoName] = repo.split('/');
-  if (!owner || !repoName) return null;
+export async function verifyGitHubWebhook(payload, contractorProfile, token) {
+  const pr       = payload.pull_request;
+  const repoName = payload.repository?.full_name;
+  const prNumber = pr?.number;
+  const author   = (pr?.user?.login ?? '').toLowerCase();
+  const mergeSha = pr?.merge_commit_sha;
 
-  const wantLogin = contractorLogin ? contractorLogin.toLowerCase() : null;
+  // Layer 1 — author matches registered contractor
+  const contractorHandle = (contractorProfile?.github ?? '').toLowerCase();
+  if (!contractorHandle) {
+    return { ok: false, reason: 'Contractor has no GitHub handle registered' };
+  }
+  if (author !== contractorHandle) {
+    return { ok: false, reason: `PR author '${author}' does not match contractor '${contractorHandle}'` };
+  }
 
-  let prs;
+  if (!repoName || !prNumber) {
+    return { ok: false, reason: 'Missing repo or PR number in payload' };
+  }
+
+  // Layer 2 — qualifying code diff
+  let files;
   try {
-    prs = await ghGet(
-      `/repos/${owner}/${repoName}/pulls?state=closed&sort=updated&direction=desc&per_page=20`,
-      token,
-    );
+    files = await ghGet(`/repos/${repoName}/pulls/${prNumber}/files?per_page=100`, token);
   } catch (err) {
-    console.warn(`[verify:github] Could not fetch PRs for ${repo}: ${err.message}`);
-    return null;
+    return { ok: false, reason: `Could not fetch PR diff: ${err.message}` };
+  }
+  if (!hasQualifyingDiff(files)) {
+    return { ok: false, reason: `PR #${prNumber} has no qualifying code changes in /src or /contracts` };
   }
 
-  const merged = prs.filter(pr =>
-    pr.merged_at &&
-    Math.floor(new Date(pr.merged_at).getTime() / 1000) > sinceTimestamp &&
-    (!wantLogin || (pr.user?.login ?? '').toLowerCase() === wantLogin),
-  );
-
-  for (const pr of merged) {
-    // Layer 1 — code diff
-    let files;
-    try {
-      files = await ghGet(`/repos/${owner}/${repoName}/pulls/${pr.number}/files?per_page=100`, token);
-    } catch { continue; }
-
-    if (!hasQualifyingDiff(files)) {
-      console.log(`[verify:github] PR#${pr.number} in ${repo} — no qualifying diff, skipping`);
-      continue;
-    }
-
-    // Layer 3 — CI status on merge commit
-    const sha = pr.merge_commit_sha;
-    let ciPassed = true;
-    if (sha) {
-      try {
-        const runs = await ghGet(
-          `/repos/${owner}/${repoName}/actions/runs?head_sha=${sha}&status=completed&per_page=10`,
-          token,
-        );
-        const completedRuns = runs.workflow_runs ?? [];
-        if (completedRuns.length > 0) {
-          ciPassed = completedRuns.every(r => r.conclusion === 'success');
-        }
-      } catch { /* CI check unavailable — allow through */ }
-    }
-
-    if (!ciPassed) {
-      console.log(`[verify:github] PR#${pr.number} in ${repo} — CI did not pass, skipping`);
-      continue;
-    }
-
-    console.log(`[verify:github] ✓ Qualifying work found — PR#${pr.number} in ${repo}`);
-
-    // Return synthetic payload matching the format verifyMilestone expects
-    return {
-      prNumber:   pr.number,
-      eventRef:   `POLL#PR#${pr.number}`,
-      payload: {
-        repository:   { owner: { login: owner }, name: repoName, full_name: repo },
-        pull_request: { number: pr.number, merged: true, user: { login: pr.user?.login ?? 'unknown' }, body: pr.body ?? '' },
-        workflow_run: { conclusion: 'success' },
-      },
-    };
-  }
-
-  // ── No qualifying merged PR — check direct commits to the default branch ────
-  // Contractors who own the repo often push straight to main without a PR.
-  const sinceISO = new Date(sinceTimestamp * 1000).toISOString();
-  let commits;
-  try {
-    commits = await ghGet(
-      `/repos/${owner}/${repoName}/commits?since=${encodeURIComponent(sinceISO)}&per_page=20`,
-      token,
-    );
-  } catch (err) {
-    console.warn(`[verify:github] Could not fetch commits for ${repo}: ${err.message}`);
-    return null;
-  }
-
-  if (!Array.isArray(commits) || commits.length === 0) return null;
-
-  for (const commit of commits) {
-    const sha = commit.sha;
-    if (!sha) continue;
-
-    // Skip commits not authored by the contractor (when we know their handle).
-    if (wantLogin && (commit.author?.login ?? '').toLowerCase() !== wantLogin) continue;
-
-    // Fetch the commit's file list to check for qualifying changes
-    let detail;
-    try {
-      detail = await ghGet(`/repos/${owner}/${repoName}/commits/${sha}`, token);
-    } catch { continue; }
-
-    const files = detail.files ?? [];
-    if (!hasQualifyingDiff(files)) continue;
-
-    // CI status for this commit
-    let ciPassed = true;
+  // Layer 3 — CI passed on merge commit
+  if (mergeSha) {
     try {
       const runs = await ghGet(
-        `/repos/${owner}/${repoName}/actions/runs?head_sha=${sha}&status=completed&per_page=10`,
+        `/repos/${repoName}/actions/runs?head_sha=${mergeSha}&status=completed&per_page=10`,
         token,
       );
       const completedRuns = runs.workflow_runs ?? [];
-      if (completedRuns.length > 0) {
-        ciPassed = completedRuns.every(r => r.conclusion === 'success');
+      if (completedRuns.length > 0 && !completedRuns.every(r => r.conclusion === 'success')) {
+        return { ok: false, reason: `CI did not pass on merge commit ${mergeSha.slice(0, 7)}` };
       }
     } catch { /* CI unavailable — allow through */ }
-
-    if (!ciPassed) {
-      console.log(`[verify:github] commit ${sha.slice(0, 7)} in ${repo} — CI did not pass, skipping`);
-      continue;
-    }
-
-    console.log(`[verify:github] ✓ Qualifying work found — commit ${sha.slice(0, 7)} in ${repo}`);
-    return {
-      eventRef: `POLL#COMMIT#${sha}`,
-      payload: {
-        repository:   { owner: { login: owner }, name: repoName, full_name: repo },
-        pull_request: { merged: true, user: { login: commit.author?.login ?? 'unknown' }, body: commit.commit?.message ?? '' },
-        workflow_run: { conclusion: 'success' },
-      },
-    };
   }
 
-  return null;
+  console.log(`[verify:github] ✓ PR #${prNumber} in ${repoName} — author + diff + CI verified`);
+  return { ok: true, eventRef: `GH#PR#${prNumber}`, prNumber };
 }
 
 // ─── Jira ─────────────────────────────────────────────────────────────────────
@@ -453,37 +380,15 @@ async function _checkStream({ streamId, chainId, source, target, sender, periodS
   let credentials = null;
   try { credentials = await getProfile(sender); } catch { /* no credentials */ }
 
-  // Query the verification source
+  // Query the verification source.
+  // GitHub, Jira, and Bitbucket are all webhook-only — their handlers call
+  // extendFromEvent() directly. checkStream only runs the poll path for Figma.
   let found = null;
   const src = (source ?? 'github').toLowerCase();
 
-  if (src === 'github') {
-    // Resolve the installation by REPO (works whether the company or the
-    // contractor installed the app), falling back to the company profile.
-    const installationId = (await getInstallationIdForRepo(target))
-      ?? credentials?.github_installation_id
-      ?? null;
-    const token = installationId ? await getInstallationToken(installationId) : null;
-
-    // Only the CONTRACTOR's own work counts — not the company's or anyone
-    // else's commits to the repo. Look up the recipient's registered GitHub
-    // handle and pass it so pollGitHub ignores everyone else.
-    const recipient = onChain.recipient ?? null;
-    let contractorLogin = null;
-    if (recipient) {
-      try { contractorLogin = (await getProfile(recipient))?.github ?? null; } catch { /* no profile */ }
-    }
-    if (!contractorLogin) {
-      console.warn(`[verify] No GitHub handle on file for contractor ${recipient ?? '?'} — refusing to extend ${streamId.slice(0, 10)}…`);
-      return;
-    }
-
-    found = await pollGitHub(target, sinceTimestamp, token, contractorLogin);
-  } else if (src === 'figma') {
+  if (src === 'figma') {
     found = await pollFigma(target, sinceTimestamp, credentials);
   } else {
-    // jira and bitbucket are webhook-only — checkStream is not called for them
-    // via the polling path. Their webhook handlers call extendFromEvent() directly.
     console.log(`[verify] Source '${src}' is webhook-only — skipping poll path for ${streamId.slice(0, 10)}…`);
     return;
   }

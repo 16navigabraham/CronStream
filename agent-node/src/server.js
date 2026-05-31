@@ -15,7 +15,7 @@ import helmet    from 'helmet';
 import rateLimit from 'express-rate-limit';
 
 import { verifyMilestone, VerificationError } from './verifyMilestone.js';
-import { checkStream, verifyJiraWebhook, verifyBitbucketWebhook, extendFromEvent } from './verificationEngine.js';
+import { verifyGitHubWebhook, verifyJiraWebhook, verifyBitbucketWebhook, extendFromEvent, checkStream } from './verificationEngine.js';
 import { signExtensionVoucher, getSignerAddress } from './agentSigner.js';
 import { submitExtension, getAllBalances, readStreamBatch }   from './chainSubmitter.js';
 import { initDb, isAlreadyProcessed, recordExtension, getExtensionCount, registerStream, getStream, getStreamsByRepo, getStreamsBySource, getStreamsForAddress, getDb, upsertProfile, getProfile, getProfileByUsername, getProfileByApiKey, searchProfiles, isUsernameTaken, addToWaitlist, getWaitlistCount, saveOAuthTokens, disconnectOAuth, saveRepoInstallation, removeRepoInstallation } from './db.js';
@@ -536,10 +536,6 @@ app.post('/api/v1/verify-milestone', sensitiveLimit, devAuth(getProfileByApiKey)
 // No manual webhook setup or commit-message metadata is needed — installing the
 // GitHub App wires delivery automatically and streams are resolved by repo.
 
-// Tracks repos where a PR merge was just processed. Used to suppress the
-// push event GitHub fires immediately after a merge (same event, double fire).
-const _recentMerges = new Map(); // repo → timestamp
-
 app.post('/api/v1/webhook/github', async (req, res, next) => { try {
   // req.body is a raw Buffer when express.raw() ran (application/json content-type).
   // Fall back to empty buffer for malformed requests — HMAC check will reject them.
@@ -623,97 +619,76 @@ app.post('/api/v1/webhook/github', async (req, res, next) => { try {
     return res.json({ received: true, event, status: 'installation_synced' });
   }
 
-  // ── Only act on a merged PR or a push to the default branch ───────────────
+  // ── Only act on merged PRs — direct commits are excluded (no company approval gate) ──
   const repo = payload.repository?.full_name ?? 'unknown';
 
-  if (event === 'pull_request') {
-    if (payload.action !== 'closed' || payload.pull_request?.merged !== true) {
-      return res.json({ received: true, event, status: 'ignored', action: payload.action });
-    }
-    console.log(`[webhook] PR #${payload.pull_request.number} merged into ${repo}`);
-    // Mark this repo as just-merged so the push event that GitHub fires
-    // immediately after doesn't double-process the same merge.
-    _recentMerges.set(repo, Date.now());
-  } else if (event === 'push') {
-    const ref        = payload.ref ?? '';
-    const defaultRef = `refs/heads/${payload.repository?.default_branch ?? 'main'}`;
-    if (ref !== defaultRef) {
-      return res.json({ received: true, event, status: 'ignored', reason: 'not default branch' });
-    }
-    // Skip push if a PR merge for this repo was processed within the last 10s —
-    // it's the same merge event, the pull_request.closed already handled it.
-    const lastMerge = _recentMerges.get(repo);
-    if (lastMerge && Date.now() - lastMerge < 10_000) {
-      console.log(`[webhook] Push skipped — PR merge for ${repo} already handled`);
-      return res.json({ received: true, event, status: 'skipped', reason: 'covered by PR merge event' });
-    }
-    console.log(`[webhook] Push to ${ref} on ${repo}`);
-  } else {
+  if (event !== 'pull_request') {
     return res.json({ received: true, event, status: 'ignored' });
   }
-
-  // ── Parse optional stream ID from commit message / PR body ──────────────
-  // Contractors can include "CronStream-Stream-Id: 0x<id>" in their commit
-  // message or PR description to route directly to their stream. This is the
-  // best practice when a repo has multiple active streams (e.g. two contractors
-  // on the same repo). Without it, the agent checks all streams for the repo.
-  let metaBody = '';
-  if (event === 'pull_request') {
-    // Search PR title + body + all commit messages attached to the event
-    const prTitle  = payload.pull_request?.title ?? '';
-    const prBody   = payload.pull_request?.body  ?? '';
-    metaBody = `${prTitle}\n${prBody}`;
-  } else {
-    // Push: scan all commits in the push, not just the head commit
-    const commits  = payload.commits ?? (payload.head_commit ? [payload.head_commit] : []);
-    metaBody = commits.map(c => c.message ?? '').join('\n');
+  if (payload.action !== 'closed' || payload.pull_request?.merged !== true) {
+    return res.json({ received: true, event, status: 'ignored', action: payload.action });
   }
+
+  const prNumber = payload.pull_request.number;
+  console.log(`[webhook:github] PR #${prNumber} merged into ${repo}`);
+
+  // ── Optional stream ID hints in PR title / body ───────────────────────────
+  // Including "CronStream-Stream-Id: 0x<id>" routes directly to that stream.
+  // Useful when multiple contractors share a repo.
+  const prMeta = `${payload.pull_request?.title ?? ''}\n${payload.pull_request?.body ?? ''}`;
   const hintedStreamIds = [...new Set(
-    [...metaBody.matchAll(/CronStream-Stream-Id:\s*(0x[a-fA-F0-9]{64})/gi)].map(m => m[1].toLowerCase())
+    [...prMeta.matchAll(/CronStream-Stream-Id:\s*(0x[a-fA-F0-9]{64})/gi)].map(m => m[1].toLowerCase()),
   )];
 
-  // ── Fire verification ──────────────────────────────────────────────────────
-  // checkStream re-reads on-chain state and re-verifies the work itself, then
-  // extends only a pending / expiring / frozen stream — a stream with healthy
-  // runway is left untouched, so frequent merges never stack runaway windows.
-  // Runs async (fire-and-forget) so GitHub gets a fast 2xx within its timeout.
   let toVerify = [];
-
   if (hintedStreamIds.length) {
-    const rows = await Promise.all(hintedStreamIds.map(id => getStream(id)));
-    const found = rows.filter(Boolean);
-    const missing = hintedStreamIds.filter((id, i) => !rows[i]);
+    const rows    = await Promise.all(hintedStreamIds.map(id => getStream(id)));
+    const found   = rows.filter(Boolean);
+    const missing = hintedStreamIds.filter((_, i) => !rows[i]);
     if (found.length) {
-      console.log(`[webhook] Stream IDs in commit — routing to ${found.length} stream(s): ${found.map(r => r.stream_id.slice(0, 10) + '…').join(', ')}`);
+      console.log(`[webhook:github] Routing to hinted stream(s): ${found.map(r => r.stream_id.slice(0, 10) + '…').join(', ')}`);
       toVerify = found;
     }
     if (missing.length) {
-      console.warn(`[webhook] ${missing.length} hinted stream(s) not in registry — skipping: ${missing.map(id => id.slice(0, 10) + '…').join(', ')}`);
+      console.warn(`[webhook:github] Hinted stream(s) not in registry: ${missing.map(id => id.slice(0, 10) + '…').join(', ')}`);
     }
   }
+  if (!toVerify.length) toVerify = await getStreamsByRepo(repo);
 
   if (!toVerify.length) {
-    toVerify = await getStreamsByRepo(repo);
-  }
-
-  if (!toVerify.length) {
-    console.log(`[webhook] No streams registered for ${repo} — skipping`);
+    console.log(`[webhook:github] No streams registered for ${repo} — skipping`);
     return res.json({ received: true, event, status: 'skipped', reason: 'No streams registered for this repo' });
   }
 
-  for (const row of toVerify) {
-    checkStream(row).catch(err =>
-      console.error(`[webhook] Verification failed for ${row.stream_id?.slice(0, 10)}…: ${err.message}`),
-    );
-  }
+  // ── Verify + extend each stream — fire-and-forget so GitHub gets a fast 2xx ──
+  res.json({ received: true, success: true, event, status: 'verifying', streams: toVerify.map(r => r.stream_id) });
 
-  return res.json({
-    received: true,
-    success:  true,
-    event,
-    status:   'verifying',
-    streams:  toVerify.map(r => r.stream_id),
-  });
+  for (const row of toVerify) {
+    (async () => {
+      try {
+        // Resolve installation token for this repo
+        const installationId = (await getInstallationIdForRepo(repo))
+          ?? (await getProfile(row.sender).catch(() => null))?.github_installation_id
+          ?? null;
+        const token = installationId ? await getInstallationToken(installationId) : null;
+
+        // Load contractor profile for author verification
+        const contractorProfile = row.recipient
+          ? await getProfile(row.recipient).catch(() => null)
+          : null;
+
+        const result = await verifyGitHubWebhook(payload, contractorProfile, token);
+        if (!result.ok) {
+          console.log(`[webhook:github] PR #${prNumber} stream ${row.stream_id.slice(0, 10)}… — ${result.reason}`);
+          return;
+        }
+
+        await extendFromEvent(row, result.eventRef, 'github');
+      } catch (err) {
+        console.error(`[webhook:github] Error for stream ${row.stream_id?.slice(0, 10)}…: ${err.message}`);
+      }
+    })();
+  }
 } catch (err) {
   console.error('[webhook] Unhandled error:', err);
   return next(err);

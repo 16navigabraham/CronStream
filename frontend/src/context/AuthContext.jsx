@@ -74,16 +74,9 @@ export function AuthProvider({ children }) {
     }
   }, [isConnected, address]);
 
-  // Auto-sign the moment a wallet connects with no active session.
-  // Only fires inside /app/* routes - public pages (faucet, landing, etc.) don't need a JWT.
-  const autoSignRef = useRef(false);
-  useEffect(() => {
-    if (!isConnected || !address || token) { autoSignRef.current = false; return; }
-    if (!window.location.pathname.startsWith('/app')) return;
-    if (autoSignRef.current) return;
-    autoSignRef.current = true;
-    signIn();
-  }, [isConnected, address, token]);
+  // No auto-sign — user always initiates via the SiwePrompt "Sign now" button.
+  // Auto-sign caused the wallet popup to fire in the background on connect,
+  // which then throttled or blocked the popup when the user clicked manually.
 
   const signIn = useCallback(async () => {
     if (!address) return;
