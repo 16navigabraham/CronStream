@@ -173,7 +173,7 @@ app.post('/api/v1/auth/:provider/initiate', verifyJwt, (req, res) => {
       break;
     case 'bitbucket':
       if (!process.env.BITBUCKET_CLIENT_ID) return res.status(503).json({ error: 'Bitbucket OAuth not configured on this server' });
-      redirectUrl = `https://bitbucket.org/site/oauth2/authorize?client_id=${process.env.BITBUCKET_CLIENT_ID}&response_type=code&scope=${encodeURIComponent('repository pullrequest')}&state=${state}&redirect_uri=${encodeURIComponent(cb)}`;
+      redirectUrl = `https://bitbucket.org/site/oauth2/authorize?client_id=${process.env.BITBUCKET_CLIENT_ID}&response_type=code&scope=${encodeURIComponent('repository pullrequest webhook project')}&state=${state}&redirect_uri=${encodeURIComponent(cb)}`;
       break;
     case 'figma':
       if (!process.env.FIGMA_CLIENT_ID) return res.status(503).json({ error: 'Figma OAuth not configured on this server' });
