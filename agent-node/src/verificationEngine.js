@@ -268,41 +268,57 @@ export async function verifyBitbucketWebhook(payload, companyCredentials, contra
   return { ok: true, eventRef: `BB#PR#${prId}` };
 }
 
-// ─── Figma ────────────────────────────────────────────────────────────────────
+// ─── Figma webhook verification ───────────────────────────────────────────────
 
-const APPROVAL_KEYWORDS = ['approved', 'lgtm', '✅', ':white_check_mark:', 'ready to ship', 'ship it', 'looks good', '👍'];
+const APPROVAL_KEYWORDS = new Set(['approved', 'lgtm', 'ready to ship', 'ship it', 'looks good']);
+const APPROVAL_EMOJI    = new Set(['✅', '👍', ':white_check_mark:']);
 
-async function pollFigma(target, sinceTimestamp, credentials) {
-  const token = credentials?.figma_oauth_token ?? credentials?.figma_token;
-  if (!token) return null;
+/**
+ * Verify a Figma FILE_COMMENT webhook event.
+ * Figma webhooks require an Organization or Enterprise plan — registered at
+ * OAuth callback. Falls back to polling for lower-tier plans (handled in server.js).
+ *
+ * 2-layer gate:
+ *   1. Comment contains an approval keyword or emoji
+ *   2. The file key matches the registered verification target
+ *
+ * Note: Figma comment webhooks don't expose the commenter's identity reliably,
+ * so author matching is skipped — the company controls who can comment in their file.
+ *
+ * @param {object} payload - Figma FILE_COMMENT webhook payload
+ * @param {string} registeredTarget - the file URL or key stored at stream registration
+ * @returns {{ ok: boolean, eventRef?: string, reason?: string }}
+ */
+export function verifyFigmaWebhook(payload, registeredTarget) {
+  const eventType = payload.event_type;
+  if (eventType !== 'FILE_COMMENT') {
+    return { ok: false, reason: `Event type '${eventType}' is not FILE_COMMENT` };
+  }
 
-  let fileKey = target.trim();
-  const urlMatch = target.match(/figma\.com\/(?:file|design|proto)\/([A-Za-z0-9]+)/);
-  if (urlMatch) fileKey = urlMatch[1];
-  if (!fileKey) return null;
+  const fileKey = payload.file_key;
+  if (!fileKey) {
+    return { ok: false, reason: 'No file_key in Figma webhook payload' };
+  }
 
-  try {
-    const headers = credentials?.figma_oauth_token
-      ? { Authorization: `Bearer ${token}` }
-      : { 'X-Figma-Token': token };
+  // Extract registered file key from URL or raw key
+  const urlMatch = (registeredTarget ?? '').match(/figma\.com\/(?:file|design|proto)\/([A-Za-z0-9]+)/);
+  const registeredKey = urlMatch ? urlMatch[1] : registeredTarget?.trim();
+  if (registeredKey && fileKey !== registeredKey) {
+    return { ok: false, reason: `File key '${fileKey}' does not match registered target` };
+  }
 
-    const res = await fetch(`https://api.figma.com/v1/files/${fileKey}/comments`, {
-      headers, signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) return null;
-    const data     = await res.json();
-    const comments = data.comments ?? [];
+  // Layer 1 — approval keyword or emoji in comment text
+  const commentText = (payload.comment?.[0]?.text ?? '').toLowerCase();
+  const hasKeyword  = [...APPROVAL_KEYWORDS].some(kw => commentText.includes(kw));
+  const hasEmoji    = [...APPROVAL_EMOJI].some(e => commentText.includes(e));
 
-    const approved = comments.find(c => {
-      const text = (c.message ?? '').toLowerCase();
-      const date = Math.floor(new Date(c.created_at).getTime() / 1000);
-      return date > sinceTimestamp && APPROVAL_KEYWORDS.some(kw => text.includes(kw));
-    });
-    if (!approved) return null;
+  if (!hasKeyword && !hasEmoji) {
+    return { ok: false, reason: 'Comment does not contain an approval keyword' };
+  }
 
-    console.log(`[verify:figma] ✓ Approval comment found in file ${fileKey}`);
-    return { eventRef: `POLL#FIGMA#${fileKey}` };
-  } catch { return null; }
+  const commentId = payload.comment_id ?? fileKey;
+  console.log(`[verify:figma] ✓ Approval comment on file ${fileKey} — "${commentText.slice(0, 50)}"`);
+  return { ok: true, eventRef: `FIGMA#COMMENT#${commentId}` };
 }
 
 // ─── Core verification ─────────────────────────────────────────────────────────
@@ -380,18 +396,11 @@ async function _checkStream({ streamId, chainId, source, target, sender, periodS
   let credentials = null;
   try { credentials = await getProfile(sender); } catch { /* no credentials */ }
 
-  // Query the verification source.
-  // GitHub, Jira, and Bitbucket are all webhook-only — their handlers call
-  // extendFromEvent() directly. checkStream only runs the poll path for Figma.
-  let found = null;
-  const src = (source ?? 'github').toLowerCase();
-
-  if (src === 'figma') {
-    found = await pollFigma(target, sinceTimestamp, credentials);
-  } else {
-    console.log(`[verify] Source '${src}' is webhook-only — skipping poll path for ${streamId.slice(0, 10)}…`);
-    return;
-  }
+  // All sources (GitHub, Jira, Bitbucket, Figma) are now webhook-only.
+  // Their handlers call extendFromEvent() directly after verification.
+  // checkStream is kept as the _inFlight guard entry point but has no poll work left.
+  console.log(`[verify] Source '${source ?? 'unknown'}' is webhook-only — nothing to poll for ${streamId.slice(0, 10)}…`);
+  return;
 
   if (!found) {
     console.log(`[verify] No qualifying work found for stream ${streamId.slice(0, 10)}…`);

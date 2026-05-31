@@ -7,6 +7,7 @@ import { useCreateStream }              from '../context/CreateStreamContext';
 import { useAuth }                      from '../context/AuthContext';
 import { useProfile }                  from '../hooks/useProfile';
 import RepoPicker                      from './RepoPicker';
+import PlatformPicker                  from './PlatformPicker';
 import Watermark                       from './Watermark';
 import { useWalletTokens }             from '../hooks/useWalletTokens';
 
@@ -475,6 +476,18 @@ export default function CreateStreamModal() {
                     githubHandle={profile?.github ?? null}
                     value={form.verificationTarget}
                     onChange={val => setForm(f => ({ ...f, verificationTarget: val }))}
+                  />
+                ) : ['jira', 'bitbucket', 'figma'].includes(form.verificationSource) ? (
+                  <PlatformPicker
+                    source={form.verificationSource}
+                    value={form.verificationTarget}
+                    onChange={val => setForm(f => ({ ...f, verificationTarget: val }))}
+                    isConnected={
+                      form.verificationSource === 'jira'      ? !!profile?.atlassian_access_token :
+                      form.verificationSource === 'bitbucket' ? !!profile?.bitbucket_oauth_token  :
+                      form.verificationSource === 'figma'     ? !!(profile?.figma_oauth_token ?? profile?.figma_token) :
+                      false
+                    }
                   />
                 ) : (
                   <div>

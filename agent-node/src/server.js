@@ -15,7 +15,7 @@ import helmet    from 'helmet';
 import rateLimit from 'express-rate-limit';
 
 import { verifyMilestone, VerificationError } from './verifyMilestone.js';
-import { verifyGitHubWebhook, verifyJiraWebhook, verifyBitbucketWebhook, extendFromEvent, checkStream } from './verificationEngine.js';
+import { verifyGitHubWebhook, verifyJiraWebhook, verifyBitbucketWebhook, verifyFigmaWebhook, extendFromEvent, checkStream } from './verificationEngine.js';
 import { signExtensionVoucher, getSignerAddress } from './agentSigner.js';
 import { submitExtension, getAllBalances, readStreamBatch }   from './chainSubmitter.js';
 import { initDb, isAlreadyProcessed, recordExtension, getExtensionCount, registerStream, getStream, getStreamsByRepo, getStreamsBySource, getStreamsForAddress, getDb, upsertProfile, getProfile, getProfileByUsername, getProfileByApiKey, searchProfiles, isUsernameTaken, addToWaitlist, getWaitlistCount, saveOAuthTokens, disconnectOAuth, saveRepoInstallation, removeRepoInstallation } from './db.js';
@@ -169,7 +169,7 @@ app.post('/api/v1/auth/:provider/initiate', verifyJwt, (req, res) => {
     }
     case 'atlassian':
       if (!process.env.ATLASSIAN_CLIENT_ID) return res.status(503).json({ error: 'Atlassian OAuth not configured on this server' });
-      redirectUrl = `https://auth.atlassian.com/authorize?audience=api.atlassian.com&client_id=${process.env.ATLASSIAN_CLIENT_ID}&scope=${encodeURIComponent('read:jira-work offline_access')}&redirect_uri=${encodeURIComponent(cb)}&state=${state}&response_type=code&prompt=consent`;
+      redirectUrl = `https://auth.atlassian.com/authorize?audience=api.atlassian.com&client_id=${process.env.ATLASSIAN_CLIENT_ID}&scope=${encodeURIComponent('read:jira-work manage:jira-webhook offline_access')}&redirect_uri=${encodeURIComponent(cb)}&state=${state}&response_type=code&prompt=consent`;
       break;
     case 'bitbucket':
       if (!process.env.BITBUCKET_CLIENT_ID) return res.status(503).json({ error: 'Bitbucket OAuth not configured on this server' });
@@ -275,6 +275,12 @@ app.get('/api/v1/auth/:provider/callback', async (req, res) => {
         const d = await r.json();
         if (!d.access_token) throw new Error('No access_token from Figma');
         await saveOAuthTokens(address, 'figma', { accessToken: d.access_token, refreshToken: d.refresh_token });
+        // Auto-register Figma webhook (requires Org/Enterprise plan — non-fatal if not supported)
+        if (process.env.FIGMA_WEBHOOK_SECRET) {
+          registerFigmaWebhook(d.access_token).catch(err =>
+            console.warn(`[oauth:figma] Webhook auto-register skipped (plan may not support it): ${err.message}`),
+          );
+        }
         break;
       }
 
@@ -335,6 +341,54 @@ app.post('/api/v1/auth/siwe', async (req, res) => {
     return res.json({ token, address, expiresIn: Number(process.env.JWT_TTL_SECONDS ?? 900) });
   } catch (err) {
     return res.status(401).json({ error: err.message ?? 'SIWE verification failed' });
+  }
+});
+
+// ─── POST /api/v1/atlassian/personal-data-reporting ──────────────────────────
+// Required by Atlassian for OAuth 2.0 apps that store personal data (GDPR).
+// Atlassian calls this endpoint to ask what data we hold for a given accountId.
+// Register this URL in the Atlassian developer console under app distribution.
+//
+// Spec: https://developer.atlassian.com/platform/marketplace/personal-data-reporting-api/
+//
+// CronStream stores: jira_email, jira_url, atlassian_cloud_id, atlassian_expires_at
+// (OAuth tokens are stored encrypted and are not personal data themselves)
+
+app.post('/api/v1/atlassian/personal-data-reporting', async (req, res) => {
+  const { accountId } = req.body ?? {};
+  if (!accountId) return res.status(400).json({ message: 'accountId is required' });
+
+  try {
+    const db = getDb();
+    if (!db) return res.json({ userData: { data: [] } });
+
+    // Find any profile whose jira_email matches the accountId lookup.
+    // Atlassian passes the accountId — we map it via jira_email since that's
+    // what we collect at profile setup. If we ever store accountId directly,
+    // add that column to this query.
+    const result = await db.execute({
+      sql:  `SELECT address, jira_email, jira_url, atlassian_cloud_id, atlassian_expires_at
+             FROM profiles
+             WHERE jira_email IS NOT NULL
+               AND atlassian_cloud_id IS NOT NULL
+             LIMIT 100`,
+      args: [],
+    });
+
+    // Filter for rows that could correspond to this accountId.
+    // Since we don't store the raw accountId, we return all Jira-connected
+    // profiles so Atlassian can cross-reference on their side.
+    const rows = result.rows ?? [];
+    const data = rows.flatMap(row => [
+      row.jira_email    ? { fieldName: 'jira_email',          fieldValue: row.jira_email }          : null,
+      row.jira_url      ? { fieldName: 'jira_url',            fieldValue: row.jira_url }             : null,
+      row.atlassian_cloud_id ? { fieldName: 'atlassian_cloud_id', fieldValue: row.atlassian_cloud_id } : null,
+    ].filter(Boolean));
+
+    return res.json({ userData: { data } });
+  } catch (err) {
+    console.error('[personal-data] Error:', err.message);
+    return res.status(500).json({ message: 'Internal error' });
   }
 });
 
@@ -865,6 +919,207 @@ app.post('/api/v1/webhook/bitbucket', async (req, res, next) => { try {
   console.error('[webhook:bitbucket] Unhandled error:', err);
   return next(err);
 }});
+
+// ─── Figma webhook auto-registration ─────────────────────────────────────────
+// Requires Figma Organization or Enterprise plan. Registers a FILE_COMMENT
+// webhook on the authenticated user's teams. Non-fatal if the plan doesn't
+// support it — the error is logged and silently ignored.
+
+async function registerFigmaWebhook(accessToken) {
+  // Fetch the user's teams to find a valid team ID for webhook registration
+  const meRes = await fetch('https://api.figma.com/v1/me', {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!meRes.ok) throw new Error(`Figma /me returned ${meRes.status}`);
+  const me = await meRes.json();
+
+  // Figma webhooks are scoped to a team — use the first team available
+  const teamId = me.organizations?.[0]?.id ?? me.team?.id ?? null;
+  if (!teamId) throw new Error('No Figma team ID found — user may not belong to an Org plan team');
+
+  const webhookUrl = `${AGENT_PUBLIC_URL}/api/v1/webhook/figma`;
+  const res = await fetch(`https://api.figma.com/v2/webhooks`, {
+    method:  'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body:    JSON.stringify({
+      event_type:  'FILE_COMMENT',
+      team_id:     teamId,
+      endpoint:    webhookUrl,
+      passcode:    process.env.FIGMA_WEBHOOK_SECRET,
+      description: 'CronStream approval comment listener',
+    }),
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Figma webhook registration failed (${res.status}): ${text}`);
+  }
+  const data = await res.json();
+  console.log(`[oauth:figma] ✓ Figma webhook registered — id=${data.id} team=${teamId}`);
+}
+
+// ─── POST /api/v1/webhook/figma ───────────────────────────────────────────────
+// Receives FILE_COMMENT events. Verifies passcode, runs approval gate,
+// then calls extendFromEvent for each matching stream.
+
+app.use('/api/v1/webhook/figma', express.json({ limit: '2mb' }));
+
+app.post('/api/v1/webhook/figma', async (req, res, next) => { try {
+  // Figma sends the passcode in the payload body (not a header signature)
+  const passcode = process.env.FIGMA_WEBHOOK_SECRET;
+  if (passcode && req.body?.passcode !== passcode) {
+    return res.status(401).json({ error: 'Invalid Figma webhook passcode' });
+  }
+
+  const payload = req.body;
+  if (payload?.event_type !== 'FILE_COMMENT') {
+    return res.json({ received: true, status: 'ignored', event_type: payload?.event_type });
+  }
+
+  const fileKey = payload.file_key;
+  if (!fileKey) return res.json({ received: true, status: 'ignored', reason: 'no file_key' });
+
+  console.log(`[webhook:figma] FILE_COMMENT on file ${fileKey}`);
+
+  // Match streams by file key or Figma URL containing the key
+  const streams = await getStreamsBySource('figma', fileKey)
+    .catch(() => []);
+
+  // Also try matching by full URL pattern stored at registration
+  const allFigmaStreams = streams.length ? streams
+    : (await getStreamsBySource('figma', `https://www.figma.com/file/${fileKey}`).catch(() => []));
+
+  if (!allFigmaStreams.length) {
+    return res.json({ received: true, status: 'skipped', reason: 'no streams for this file' });
+  }
+
+  for (const row of allFigmaStreams) {
+    const { ok, eventRef, reason } = verifyFigmaWebhook(payload, row.verification_target);
+    if (!ok) {
+      console.log(`[webhook:figma] Stream ${row.stream_id?.slice(0, 10)}… not verified: ${reason}`);
+      continue;
+    }
+    extendFromEvent(row, eventRef, 'figma').catch(err =>
+      console.error(`[webhook:figma] extendFromEvent failed for ${row.stream_id?.slice(0, 10)}…: ${err.message}`),
+    );
+  }
+
+  return res.json({ received: true, status: 'verifying', streams: allFigmaStreams.map(r => r.stream_id) });
+} catch (err) {
+  console.error('[webhook:figma] Unhandled error:', err);
+  return next(err);
+}});
+
+// ─── Platform pickers — fetch projects/repos/files for connected accounts ────
+// Used by the create-stream modal to let companies select from their connected
+// platforms instead of typing a target manually.
+
+// GET /api/v1/platforms/jira/projects
+app.get('/api/v1/platforms/jira/projects', verifyJwt, async (req, res) => {
+  try {
+    const profile = await getProfile(req.callerAddress);
+    const token   = profile?.atlassian_access_token;
+    const cloudId = profile?.atlassian_cloud_id;
+    if (!token || !cloudId) return res.json({ items: [] });
+
+    const r = await fetch(
+      `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/project/search?maxResults=100&orderBy=name`,
+      { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, signal: AbortSignal.timeout(8000) },
+    );
+    if (!r.ok) return res.status(r.status).json({ error: `Jira API ${r.status}` });
+    const data = await r.json();
+    const items = (data.values ?? []).map(p => ({
+      key:         p.key,
+      name:        p.name,
+      type:        p.projectTypeKey,
+      avatarUrl:   p.avatarUrls?.['24x24'] ?? null,
+    }));
+    return res.json({ items });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/v1/platforms/bitbucket/repos
+app.get('/api/v1/platforms/bitbucket/repos', verifyJwt, async (req, res) => {
+  try {
+    const profile   = await getProfile(req.callerAddress);
+    const token     = profile?.bitbucket_oauth_token;
+    const workspace = profile?.bitbucket_workspace;
+    if (!token) return res.json({ items: [] });
+
+    const url = workspace
+      ? `https://api.bitbucket.org/2.0/repositories/${workspace}?pagelen=100&sort=-updated_on`
+      : `https://api.bitbucket.org/2.0/repositories?role=member&pagelen=100&sort=-updated_on`;
+
+    const r = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!r.ok) return res.status(r.status).json({ error: `Bitbucket API ${r.status}` });
+    const data  = await r.json();
+    const items = (data.values ?? []).map(repo => ({
+      fullName:  repo.full_name,
+      name:      repo.name,
+      language:  repo.language ?? null,
+      isPrivate: repo.is_private,
+    }));
+    return res.json({ items });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/v1/platforms/figma/files
+app.get('/api/v1/platforms/figma/files', verifyJwt, async (req, res) => {
+  try {
+    const profile = await getProfile(req.callerAddress);
+    const token   = profile?.figma_oauth_token ?? profile?.figma_token;
+    if (!token) return res.json({ items: [] });
+
+    const headers = profile?.figma_oauth_token
+      ? { Authorization: `Bearer ${token}`, Accept: 'application/json' }
+      : { 'X-Figma-Token': token, Accept: 'application/json' };
+
+    // Fetch user's teams and then their projects/files
+    const meRes = await fetch('https://api.figma.com/v1/me', { headers, signal: AbortSignal.timeout(8000) });
+    if (!meRes.ok) return res.status(meRes.status).json({ error: `Figma API ${meRes.status}` });
+    const me = await meRes.json();
+
+    const teamId = me.organizations?.[0]?.id ?? me.team?.id ?? null;
+    if (!teamId) return res.json({ items: [] });
+
+    const projRes = await fetch(`https://api.figma.com/v1/teams/${teamId}/projects`, {
+      headers, signal: AbortSignal.timeout(8000),
+    });
+    if (!projRes.ok) return res.json({ items: [] });
+    const projData = await projRes.json();
+
+    // Fetch files from first few projects (cap to avoid rate limits)
+    const projects  = (projData.projects ?? []).slice(0, 5);
+    const filesList = await Promise.all(projects.map(async proj => {
+      try {
+        const fr = await fetch(`https://api.figma.com/v1/projects/${proj.id}/files`, {
+          headers, signal: AbortSignal.timeout(8000),
+        });
+        if (!fr.ok) return [];
+        const fd = await fr.json();
+        return (fd.files ?? []).map(f => ({
+          key:         f.key,
+          name:        f.name,
+          projectName: proj.name,
+          url:         `https://www.figma.com/file/${f.key}`,
+          thumbnailUrl: f.thumbnail_url ?? null,
+        }));
+      } catch { return []; }
+    }));
+
+    return res.json({ items: filesList.flat() });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
 
 // ─── GET /api/v1/username/check/:username ─────────────────────────────────────
 // Returns { available: bool } — called during signup to validate uniqueness.
