@@ -103,7 +103,7 @@ function IntegrationsSection({ profile, refreshProfile }) {
         return;
       }
       setToast({ provider, status: 'disconnected' });
-      setTimeout(() => setToast(null), 3000);
+      setTimeout(() => window.location.reload(), 1500);
     } catch {
       // fetch threw (cold-start / network blip) - the server may have processed
       // it anyway. Stay quiet and let the profile refresh reconcile the real state.

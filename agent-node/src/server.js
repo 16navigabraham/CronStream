@@ -1740,9 +1740,14 @@ startStreamListeners().catch(err =>
   console.warn('[listener] Failed to start stream listeners:', err.message),
 );
 
+process.on('SIGTERM', () => {
+  console.log('[agent] ✗ Instance shutting down (SIGTERM received — Render is replacing this instance)');
+  process.exit(0);
+});
+
 app.listen(PORT, async () => {
   console.log('═══════════════════════════════════════════════════');
-  console.log('  CronStream Agent Node');
+  console.log('  CronStream Agent Node — NEW INSTANCE STARTED');
   console.log('═══════════════════════════════════════════════════');
   console.log(`  Port:      ${PORT}`);
   const arbAddr  = process.env.CONTRACT_ADDRESS_ARB_SEPOLIA || process.env.CONTRACT_ADDRESS;
