@@ -14,7 +14,7 @@
  * Rule-based. No LLM. Deterministic. No scheduled polling — triggered by events.
  */
 
-import { getLastExtensionTime, isAlreadyProcessed, recordExtension, getProfile, getInstallationIdForRepo } from './db.js';
+import { getLastExtensionTime, isAlreadyProcessed, recordExtension, getProfile, getInstallationIdForRepo, getWeeklyExtendedSeconds } from './db.js';
 import { readStreamBatch, submitExtension } from './chainSubmitter.js';
 import { signExtensionVoucher } from './agentSigner.js';
 import { getInstallationToken } from './githubApp.js';
@@ -417,12 +417,14 @@ async function _checkStream({ streamId, chainId, source, target, sender, periodS
   const totalDeposited   = BigInt(onChain.totalDeposited ?? 0n);
   const nonce            = Number(onChain.nonce ?? 0n);
 
-  // Extension window = one full period (weekly, bi-weekly, or monthly — whatever the company set).
-  // A verified event unlocks exactly one period of streaming so the contractor receives the agreed
-  // payout amount. The state machine (isPending / isExpiring / isFrozen) prevents stacking:
-  // a stream with healthy runway is skipped, so extensions top up roughly once per period.
   const period = Number(periodSeconds ?? 604800);
-  const extensionSeconds = period;
+
+  // If hours_per_week is set: each verified event unlocks one day's worth of
+  // working hours (hrs/week ÷ 5 × 3600s). This ties streaming directly to
+  // progress — contractor must keep delivering to keep funds flowing.
+  // Without hours_per_week (legacy streams): fall back to one full period.
+  const dailyWorkSeconds = hoursPerWeek ? Math.round((hoursPerWeek / 5) * 3600) : null;
+  const extensionSeconds = dailyWorkSeconds ?? period;
 
   const isPending  = streamValidUntil <= startTime && totalDeposited > 0n;
   const isExpiring = !isPending && streamValidUntil > now && (streamValidUntil - now) <= WARN_WINDOW_S;
@@ -500,6 +502,22 @@ async function _checkStream({ streamId, chainId, source, target, sender, periodS
     return;
   }
 
+  // Weekly hours cap — only enforced when hours_per_week is set.
+  // Rolls weekly from stream startTime so each 7-day window resets cleanly.
+  if (hoursPerWeek && dailyWorkSeconds) {
+    const weekDuration     = 7 * 86400;
+    const weeksSinceStart  = Math.floor((now - startTime) / weekDuration);
+    const weekStart        = startTime + weeksSinceStart * weekDuration;
+    const weekSecondsUsed  = await getWeeklyExtendedSeconds(streamId, weekStart);
+    const maxWeeklySeconds = Math.round(hoursPerWeek * 3600);
+
+    if (weekSecondsUsed + extensionSeconds > maxWeeklySeconds) {
+      console.log(`[verify] Weekly cap reached for ${streamId.slice(0, 10)}… (${weekSecondsUsed}/${maxWeeklySeconds}s used this week) — skipping`);
+      return;
+    }
+    console.log(`[verify] Weekly budget: ${weekSecondsUsed + extensionSeconds}/${maxWeeklySeconds}s after this extension`);
+  }
+
   const extensionDurationSeconds = extensionSeconds;
   const expiry = Math.floor(Date.now() / 1000) + VOUCHER_TTL_S;
 
@@ -523,18 +541,19 @@ async function _checkStream({ streamId, chainId, source, target, sender, periodS
   // Persist
   await recordExtension({
     streamId,
-    repository:    repo,
-    prNumber:      found.prNumber ?? null,
+    repository:      repo,
+    prNumber:        found.prNumber ?? null,
     eventRef,
-    chainId:       onChainResult.chainId,
-    chainName:     onChainResult.chainName,
-    txHash:        onChainResult.txHash,
-    blockNumber:   onChainResult.blockNumber,
-    gasUsed:       onChainResult.gasUsed,
-    voucherExpiry: expiry,
+    chainId:         onChainResult.chainId,
+    chainName:       onChainResult.chainName,
+    txHash:          onChainResult.txHash,
+    blockNumber:     onChainResult.blockNumber,
+    gasUsed:         onChainResult.gasUsed,
+    voucherExpiry:   expiry,
+    extensionSeconds,
   });
 
-  console.log(`[verify] ✓ Extended stream ${streamId.slice(0, 10)}… via ${stateLabel} event | tx=${onChainResult.txHash}`);
+  console.log(`[verify] ✓ Extended stream ${streamId.slice(0, 10)}… +${extensionSeconds}s via ${stateLabel} event | tx=${onChainResult.txHash}`);
 }
 
 /**
@@ -572,7 +591,8 @@ export async function extendFromEvent(dbRow, eventRef, sourceLabel) {
     const totalDeposited   = BigInt(onChain.totalDeposited ?? 0n);
     const nonce            = Number(onChain.nonce ?? 0n);
     const period           = Number(periodSeconds ?? 604800);
-    const extensionSeconds = period;
+    const dailyWorkSeconds = hoursPerWeek ? Math.round((hoursPerWeek / 5) * 3600) : null;
+    const extensionSeconds = dailyWorkSeconds ?? period;
 
     const isPending  = streamValidUntil <= startTime && totalDeposited > 0n;
     const isExpiring = !isPending && streamValidUntil > now && (streamValidUntil - now) <= WARN_WINDOW_S;
@@ -589,8 +609,22 @@ export async function extendFromEvent(dbRow, eventRef, sourceLabel) {
       return;
     }
 
+    // Weekly hours cap
+    if (hoursPerWeek && dailyWorkSeconds) {
+      const weekDuration     = 7 * 86400;
+      const weeksSinceStart  = Math.floor((now - startTime) / weekDuration);
+      const weekStart        = startTime + weeksSinceStart * weekDuration;
+      const weekSecondsUsed  = await getWeeklyExtendedSeconds(streamId, weekStart);
+      const maxWeeklySeconds = Math.round(hoursPerWeek * 3600);
+
+      if (weekSecondsUsed + extensionSeconds > maxWeeklySeconds) {
+        console.log(`[verify:${sourceLabel}] Weekly cap reached for ${streamId?.slice(0, 10)}… (${weekSecondsUsed}/${maxWeeklySeconds}s) — skipping`);
+        return;
+      }
+    }
+
     const stateLabel = isPending ? 'pending' : isExpiring ? 'expiring' : 'frozen';
-    console.log(`[verify:${sourceLabel}] Extending ${stateLabel} stream ${streamId?.slice(0, 10)}… via ${eventRef} (${extensionSeconds}s)`);
+    console.log(`[verify:${sourceLabel}] Extending ${stateLabel} stream ${streamId?.slice(0, 10)}… +${extensionSeconds}s via ${eventRef}`);
 
     const extensionDurationSeconds = extensionSeconds;
     const expiry = now + VOUCHER_TTL_S;
@@ -613,15 +647,16 @@ export async function extendFromEvent(dbRow, eventRef, sourceLabel) {
 
     await recordExtension({
       streamId,
-      repository:    target,
-      prNumber:      null,
+      repository:      target,
+      prNumber:        null,
       eventRef,
-      chainId:       onChainResult.chainId,
-      chainName:     onChainResult.chainName,
-      txHash:        onChainResult.txHash,
-      blockNumber:   onChainResult.blockNumber,
-      gasUsed:       onChainResult.gasUsed,
-      voucherExpiry: expiry,
+      chainId:         onChainResult.chainId,
+      chainName:       onChainResult.chainName,
+      txHash:          onChainResult.txHash,
+      blockNumber:     onChainResult.blockNumber,
+      gasUsed:         onChainResult.gasUsed,
+      voucherExpiry:   expiry,
+      extensionSeconds,
     });
 
     console.log(`[verify:${sourceLabel}] ✓ Extended stream ${streamId?.slice(0, 10)}… | tx=${onChainResult.txHash}`);

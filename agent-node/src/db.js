@@ -158,6 +158,9 @@ export async function initDb() {
     // hours_per_week — used to calculate per-event extension (one day of work)
     // instead of extending by the full period on every verified event
     'ALTER TABLE stream_registry ADD COLUMN hours_per_week REAL',
+    // extension_seconds — records how long each verified extension actually was,
+    // so the agent can enforce the weekly hours cap across multiple events
+    'ALTER TABLE processed_extensions ADD COLUMN extension_seconds INTEGER',
   ];
   for (const sql of migrations) {
     try { await db.execute(sql); } catch { /* column already exists */ }
@@ -201,7 +204,7 @@ export async function isAlreadyProcessed(streamId, repository, eventRef) {
 export async function recordExtension({
   streamId, repository, prNumber, eventRef,
   chainId, chainName,
-  txHash, blockNumber, gasUsed, voucherExpiry,
+  txHash, blockNumber, gasUsed, voucherExpiry, extensionSeconds,
 }) {
   const db = getDb();
   if (!db) return;
@@ -209,14 +212,32 @@ export async function recordExtension({
   await db.execute({
     sql: `INSERT OR IGNORE INTO processed_extensions
             (stream_id, repository, pr_number, event_ref, chain_id, chain_name,
-             tx_hash, block_number, gas_used, voucher_expiry)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             tx_hash, block_number, gas_used, voucher_expiry, extension_seconds)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       streamId, repository, prNumber ?? null, ref,
       chainId, chainName,
       txHash ?? null, blockNumber ?? null, gasUsed ?? null, voucherExpiry ?? null,
+      extensionSeconds ?? null,
     ],
   });
+}
+
+/**
+ * Sum of extension_seconds granted to a stream since weekStartTime.
+ * Used to enforce the weekly hours cap — contractor cannot earn more than
+ * hours_per_week × 3600 seconds of streaming per rolling 7-day window.
+ */
+export async function getWeeklyExtendedSeconds(streamId, weekStartTime) {
+  const db = getDb();
+  if (!db) return 0;
+  const result = await db.execute({
+    sql: `SELECT COALESCE(SUM(extension_seconds), 0) AS total
+          FROM processed_extensions
+          WHERE stream_id = ? AND created_at >= ?`,
+    args: [streamId, weekStartTime],
+  });
+  return Number(result.rows[0]?.total ?? 0);
 }
 
 // ─── Stream Repo Lookup ───────────────────────────────────────────────────────

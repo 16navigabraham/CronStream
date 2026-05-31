@@ -258,13 +258,27 @@ export default function CreateStreamModal() {
   const milestoneRaw  = form.milestoneAmount ? parseUnits(form.milestoneAmount, decimals) : 0n;
   const totalCostRaw  = milestoneRaw * milestoneCount;
 
-  // Full contract duration = window × number of milestones
-  const durationSeconds = windowSeconds * milestoneCount;
+  // When hours_per_week is set: rate is based on total WORKING seconds, not calendar time.
+  // This ensures each verified day of work earns exactly (hrs/week ÷ 5 × hourlyRate).
+  // Without hourly data: fall back to calendar duration (legacy / manual entry).
+  const hoursPerWeekNum   = parseFloat(hourly.hours);
+  const usingHourlyRate   = hoursPerWeekNum > 0;
+  const workingSecondsPerWeek = usingHourlyRate ? Math.round(hoursPerWeekNum * 3600) : null;
+  const totalWorkingSeconds   = workingSecondsPerWeek
+    ? BigInt(workingSecondsPerWeek) * milestoneCount
+    : windowSeconds * milestoneCount;
+  const durationSeconds = totalWorkingSeconds;
 
-  // ratePerSecond = floor(totalDeposit / totalDuration) - streams the exact deposit over the full period
+  // ratePerSecond = floor(totalDeposit / totalWorkingDuration)
   const ratePerSecond = totalCostRaw > 0n && durationSeconds > 0n
     ? totalCostRaw / durationSeconds
     : 0n;
+
+  // Per-event extension: one day of working hours when hourly rate is set,
+  // otherwise the full payout window (weekly / bi-weekly / monthly).
+  const extensionDurationSeconds = usingHourlyRate
+    ? Math.round((hoursPerWeekNum / 5) * 3600)
+    : Number(windowSeconds);
   const totalCostFloat = totalCostRaw > 0n ? parseFloat(formatUnits(totalCostRaw, decimals)) : 0;
 
   const totalCostDisplay = totalCostRaw > 0n
@@ -362,8 +376,8 @@ export default function CreateStreamModal() {
           recipient:               recipientAddr,
           ratePerSecond:           ratePerSecond.toString(),
           token:                   form.token,
-          extensionDurationSeconds: Number(windowSeconds),
-          hoursPerWeek:            parseFloat(hourly.hours) > 0 ? parseFloat(hourly.hours) : undefined,
+          extensionDurationSeconds,
+          hoursPerWeek:            usingHourlyRate ? hoursPerWeekNum : undefined,
           chainId,
         };
         setRegArgs(args);
