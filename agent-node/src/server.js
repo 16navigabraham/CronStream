@@ -1170,53 +1170,10 @@ app.get('/api/v1/platforms/bitbucket/repos', verifyJwt, async (req, res) => {
 });
 
 // GET /api/v1/platforms/figma/files
-app.get('/api/v1/platforms/figma/files', verifyJwt, async (req, res) => {
-  try {
-    const profile = await getProfile(req.callerAddress);
-    const token   = profile?.figma_oauth_token ?? profile?.figma_token;
-    if (!token) return res.json({ items: [] });
-
-    const headers = profile?.figma_oauth_token
-      ? { Authorization: `Bearer ${token}`, Accept: 'application/json' }
-      : { 'X-Figma-Token': token, Accept: 'application/json' };
-
-    // Fetch user's teams and then their projects/files
-    const meRes = await fetch('https://api.figma.com/v1/me', { headers, signal: AbortSignal.timeout(8000) });
-    if (!meRes.ok) return res.status(meRes.status).json({ error: `Figma API ${meRes.status}` });
-    const me = await meRes.json();
-
-    const teamId = me.organizations?.[0]?.id ?? me.team?.id ?? null;
-    if (!teamId) return res.json({ items: [] });
-
-    const projRes = await fetch(`https://api.figma.com/v1/teams/${teamId}/projects`, {
-      headers, signal: AbortSignal.timeout(8000),
-    });
-    if (!projRes.ok) return res.json({ items: [] });
-    const projData = await projRes.json();
-
-    // Fetch files from first few projects (cap to avoid rate limits)
-    const projects  = (projData.projects ?? []).slice(0, 5);
-    const filesList = await Promise.all(projects.map(async proj => {
-      try {
-        const fr = await fetch(`https://api.figma.com/v1/projects/${proj.id}/files`, {
-          headers, signal: AbortSignal.timeout(8000),
-        });
-        if (!fr.ok) return [];
-        const fd = await fr.json();
-        return (fd.files ?? []).map(f => ({
-          key:         f.key,
-          name:        f.name,
-          projectName: proj.name,
-          url:         `https://www.figma.com/file/${f.key}`,
-          thumbnailUrl: f.thumbnail_url ?? null,
-        }));
-      } catch { return []; }
-    }));
-
-    return res.json({ items: filesList.flat() });
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
+// Figma's app review guidelines prohibit enumeration of files via the projects
+// endpoints. Users must paste the file URL manually instead.
+app.get('/api/v1/platforms/figma/files', verifyJwt, (_req, res) => {
+  return res.json({ items: [], manual: true });
 });
 
 // ─── GET /api/v1/username/check/:username ─────────────────────────────────────

@@ -24,12 +24,12 @@ const CONFIG = {
   },
   figma: {
     endpoint:    '/api/v1/platforms/figma/files',
-    placeholder: 'Search Figma files…',
+    placeholder: 'https://www.figma.com/file/...',
     manual:      'https://www.figma.com/file/...',
     label:       item => item.name,
     sub:         item => item.projectName ?? '',
     value:       item => item.url,
-    notConnected: 'Connect Figma in Settings to browse your files.',
+    notConnected: 'Paste your Figma file URL below.',
   },
 };
 
