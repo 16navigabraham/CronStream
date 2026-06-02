@@ -114,7 +114,7 @@ async function startChainListener(chainId, config) {
       lastPolledBlock = currentBlock;
     } catch (err) {
       // Non-fatal — next poll will retry
-      console.warn(`[listener:${config.name}] Poll error (non-fatal):`, err.shortMessage ?? err.message);
+      console.warn(`[listener:${config.name}] Poll error (non-fatal):`, err.shortMessage ?? err.message, err.error?.message ?? '');
     }
   }
 
