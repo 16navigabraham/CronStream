@@ -27,14 +27,16 @@ const ROUTER_ABI = [
 
 const CHAINS = {
   421614: {
-    name:            'Arbitrum Sepolia',
-    rpcUrl:          () => process.env.ARBITRUM_RPC_URL || 'https://sepolia-rollup.arbitrum.io/rpc',
-    contractAddress: () => process.env.CONTRACT_ADDRESS_ARB_SEPOLIA || process.env.CONTRACT_ADDRESS,
+    name:             'Arbitrum Sepolia',
+    rpcUrl:           () => process.env.ARBITRUM_RPC_URL || 'https://sepolia-rollup.arbitrum.io/rpc',
+    contractAddress:  () => process.env.CONTRACT_ADDRESS_ARB_SEPOLIA || process.env.CONTRACT_ADDRESS,
+    maxBlocksPerPoll: 490,
   },
   46630: {
-    name:            'Robinhood Chain',
-    rpcUrl:          () => process.env.ROBINHOOD_RPC_URL,
-    contractAddress: () => process.env.CONTRACT_ADDRESS_ROBINHOOD || process.env.CONTRACT_ADDRESS,
+    name:             'Robinhood Chain',
+    rpcUrl:           () => process.env.ROBINHOOD_RPC_URL,
+    contractAddress:  () => process.env.CONTRACT_ADDRESS_ROBINHOOD || process.env.CONTRACT_ADDRESS,
+    maxBlocksPerPoll: 10, // Alchemy Robinhood endpoint rejects ranges > 10 blocks
   },
 };
 
@@ -92,8 +94,8 @@ async function startChainListener(chainId, config) {
   // ── Live polling — getLogs every 30s with 500-block windows ──────────────
   // ethers.js provider.on() uses eth_getFilterChanges which has a 500-block cap
   // on Alchemy free tier. Polling getLogs with bounded ranges avoids that limit.
-  const POLL_INTERVAL_MS = 30_000;
-  const MAX_BLOCKS_PER_POLL = 490; // stay under Alchemy's 500-block free limit
+  const POLL_INTERVAL_MS    = 30_000;
+  const MAX_BLOCKS_PER_POLL = config.maxBlocksPerPoll ?? 490;
   let lastPolledBlock = latestBlock;
 
   async function pollNewEvents() {
