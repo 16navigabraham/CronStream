@@ -768,7 +768,7 @@ async function registerJiraWebhook(cloudId, accessToken, callerAddress = null) {
     webhooks: [
       {
         events:         ['jira:issue_updated'],
-        jqlFilter:      '',
+        jqlFilter:      'project is not EMPTY',
         fieldIdsFilter: ['status'],
       },
     ],
@@ -1063,13 +1063,62 @@ app.post('/api/v1/webhook/figma', async (req, res, next) => { try {
 // Used by the create-stream modal to let companies select from their connected
 // platforms instead of typing a target manually.
 
+async function refreshAtlassianTokenIfNeeded(address, profile) {
+  const now = Math.floor(Date.now() / 1000);
+  const expiresAt = profile?.atlassian_expires_at;
+  // Refresh if expired or expiring within 5 minutes
+  if (expiresAt && now < expiresAt - 300) return profile?.atlassian_access_token;
+  const refreshToken = profile?.atlassian_refresh_token;
+  if (!refreshToken) return profile?.atlassian_access_token;
+  try {
+    const r = await fetch('https://auth.atlassian.com/oauth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ grant_type: 'refresh_token', client_id: process.env.ATLASSIAN_CLIENT_ID, client_secret: process.env.ATLASSIAN_CLIENT_SECRET, refresh_token: refreshToken }),
+    });
+    const d = await r.json();
+    if (!d.access_token) { console.warn('[atlassian] Token refresh failed:', d.error ?? d); return profile?.atlassian_access_token; }
+    const newExpiry = d.expires_in ? now + d.expires_in : null;
+    await saveOAuthTokens(address, 'atlassian', { accessToken: d.access_token, refreshToken: d.refresh_token ?? refreshToken, cloudId: profile?.atlassian_cloud_id, expiresAt: newExpiry });
+    console.log('[atlassian] Token refreshed successfully');
+    return d.access_token;
+  } catch (e) {
+    console.warn('[atlassian] Token refresh error:', e.message);
+    return profile?.atlassian_access_token;
+  }
+}
+
+async function refreshBitbucketTokenIfNeeded(address, profile) {
+  const refreshToken = profile?.bitbucket_refresh_token;
+  if (!refreshToken) return profile?.bitbucket_oauth_token;
+  // Bitbucket tokens expire after 2h — always try a refresh for picker calls
+  // to avoid stale-token 401s without storing expiry (Bitbucket doesn't return expires_in reliably)
+  try {
+    const creds = Buffer.from(`${process.env.BITBUCKET_CLIENT_ID}:${process.env.BITBUCKET_CLIENT_SECRET}`).toString('base64');
+    const r = await fetch('https://bitbucket.org/site/oauth2/access_token', {
+      method: 'POST',
+      headers: { Authorization: `Basic ${creds}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken }),
+    });
+    const d = await r.json();
+    if (!d.access_token) { console.warn('[bitbucket] Token refresh failed:', d.error ?? d); return profile?.bitbucket_oauth_token; }
+    await saveOAuthTokens(address, 'bitbucket', { accessToken: d.access_token, refreshToken: d.refresh_token ?? refreshToken });
+    console.log('[bitbucket] Token refreshed successfully');
+    return d.access_token;
+  } catch (e) {
+    console.warn('[bitbucket] Token refresh error:', e.message);
+    return profile?.bitbucket_oauth_token;
+  }
+}
+
 // GET /api/v1/platforms/jira/projects
 app.get('/api/v1/platforms/jira/projects', verifyJwt, async (req, res) => {
   try {
     const profile = await getProfile(req.callerAddress);
-    const token   = profile?.atlassian_access_token;
     const cloudId = profile?.atlassian_cloud_id;
-    if (!token || !cloudId) return res.json({ items: [] });
+    if (!cloudId) return res.json({ items: [] });
+    const token = await refreshAtlassianTokenIfNeeded(req.callerAddress, profile);
+    if (!token) return res.json({ items: [] });
 
     const r = await fetch(
       `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/project/search?maxResults=100&orderBy=name`,
@@ -1093,7 +1142,8 @@ app.get('/api/v1/platforms/jira/projects', verifyJwt, async (req, res) => {
 app.get('/api/v1/platforms/bitbucket/repos', verifyJwt, async (req, res) => {
   try {
     const profile   = await getProfile(req.callerAddress);
-    const token     = profile?.bitbucket_oauth_token;
+    if (!profile?.bitbucket_oauth_token && !profile?.bitbucket_refresh_token) return res.json({ items: [] });
+    const token     = await refreshBitbucketTokenIfNeeded(req.callerAddress, profile);
     const workspace = profile?.bitbucket_workspace;
     if (!token) return res.json({ items: [] });
 
