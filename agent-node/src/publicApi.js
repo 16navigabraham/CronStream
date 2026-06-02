@@ -53,27 +53,27 @@ const NETWORK = process.env.X402_NETWORK ?? 'base-sepolia';
 router.use(
   PAY_TO
     ? paymentMiddleware(PAY_TO, {
-        'POST /api/public/verify-milestone': {
+        'POST /verify-milestone': {
           price:   '$0.10',
           network: NETWORK,
           config:  { description: 'Verify a work milestone and get a signed stream-extension voucher' },
         },
-        'GET /api/public/stream/*': {
+        'GET /stream/*': {
           price:   '$0.01',
           network: NETWORK,
           config:  { description: 'Read a stream entry from the CronStream registry' },
         },
-        'GET /api/public/balance/*': {
+        'GET /balance/*': {
           price:   '$0.01',
           network: NETWORK,
           config:  { description: 'Read live on-chain withdrawable balance for a stream' },
         },
-        'GET /api/public/streams/company/*': {
+        'GET /streams/company/*': {
           price:   '$0.05',
           network: NETWORK,
           config:  { description: 'List all streams a company has opened' },
         },
-        'GET /api/public/streams/contractor/*': {
+        'GET /streams/contractor/*': {
           price:   '$0.05',
           network: NETWORK,
           config:  { description: 'List all streams a contractor is receiving' },
