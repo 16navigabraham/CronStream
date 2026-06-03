@@ -23,6 +23,7 @@ import { publicProfile } from './encryption.js';
 import publicApiRouter        from './publicApi.js';
 import { startStreamListeners } from './streamListener.js';
 import { generateNonce, verifySiwe, issueJwt, verifyJwt, verifyJwtOrApiKey, verifyJwtOrApiKeyOrX402 } from './auth.js';
+import { getInstallationToken } from './githubApp.js';
 
 const app = express();
 
@@ -1081,6 +1082,34 @@ app.post('/api/v1/webhook/figma', async (req, res, next) => { try {
 // ─── Platform pickers — fetch projects/repos/files for connected accounts ────
 // Used by the create-stream modal to let companies select from their connected
 // platforms instead of typing a target manually.
+
+// GET /api/v1/platforms/github/repos
+app.get('/api/v1/platforms/github/repos', verifyJwt, async (req, res) => {
+  try {
+    const profile       = await getProfile(req.callerAddress);
+    const installationId = profile?.github_installation_id;
+    if (!installationId) return res.json({ items: [] });
+
+    const token = await getInstallationToken(installationId).catch(() => null);
+    if (!token) return res.json({ items: [] });
+
+    const r = await fetch(
+      `https://api.github.com/installation/repositories?per_page=100`,
+      { headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(8000) },
+    );
+    if (!r.ok) return res.status(r.status).json({ error: `GitHub API ${r.status}` });
+    const data  = await r.json();
+    const items = (data.repositories ?? []).map(repo => ({
+      fullName:    repo.full_name,
+      description: repo.description ?? null,
+      language:    repo.language    ?? null,
+      isPrivate:   repo.private,
+    }));
+    return res.json({ items });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
 
 async function refreshAtlassianTokenIfNeeded(address, profile) {
   const now = Math.floor(Date.now() / 1000);

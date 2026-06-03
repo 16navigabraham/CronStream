@@ -473,7 +473,7 @@ export default function CreateStreamModal() {
                 </div>
                 {form.verificationSource === 'github' ? (
                   <RepoPicker
-                    githubHandle={profile?.github ?? null}
+                    isConnected={!!profile?.github_connected}
                     value={form.verificationTarget}
                     onChange={val => setForm(f => ({ ...f, verificationTarget: val }))}
                   />
