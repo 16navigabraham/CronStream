@@ -177,7 +177,7 @@ app.post('/api/v1/auth/:provider/initiate', verifyJwt, (req, res) => {
       break;
     case 'figma':
       if (!process.env.FIGMA_CLIENT_ID) return res.status(503).json({ error: 'Figma OAuth not configured on this server' });
-      redirectUrl = `https://www.figma.com/oauth?client_id=${process.env.FIGMA_CLIENT_ID}&redirect_uri=${encodeURIComponent(cb)}&scope=files:read,comments:read,webhooks:read&state=${state}&response_type=code`;
+      redirectUrl = `https://www.figma.com/oauth?client_id=${process.env.FIGMA_CLIENT_ID}&redirect_uri=${encodeURIComponent(cb)}&scope=file_content:read,file_comments:read,webhooks:read&state=${state}&response_type=code`;
       break;
     default:
       return res.status(400).json({ error: `Unknown provider: ${provider}` });
@@ -267,10 +267,11 @@ app.get('/api/v1/auth/:provider/callback', async (req, res) => {
       }
 
       case 'figma': {
+        const figmaCreds = Buffer.from(`${process.env.FIGMA_CLIENT_ID}:${process.env.FIGMA_CLIENT_SECRET}`).toString('base64');
         const r = await fetch('https://api.figma.com/v1/oauth/token', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({ client_id: process.env.FIGMA_CLIENT_ID, client_secret: process.env.FIGMA_CLIENT_SECRET, redirect_uri: cb, code, grant_type: 'authorization_code' }),
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: `Basic ${figmaCreds}` },
+          body: new URLSearchParams({ redirect_uri: cb, code, grant_type: 'authorization_code' }),
         });
         const d = await r.json();
         if (!d.access_token) throw new Error('No access_token from Figma');
