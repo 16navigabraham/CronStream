@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same ref to save minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Detect which parts of the monorepo changed ──────────────────────────────
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      contracts: ${{ steps.filter.outputs.contracts }}
+      agent: ${{ steps.filter.outputs.agent }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            contracts:
+              - 'contracts/**'
+            agent:
+              - 'agent-node/**'
+            frontend:
+              - 'frontend/**'
+
+  # ── Solidity: build + test ──────────────────────────────────────────────────
+  contracts:
+    needs: changes
+    if: needs.changes.outputs.contracts == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: foundry-rs/foundry-toolchain@v1
+      - name: forge build
+        run: forge build --sizes
+      - name: forge test
+        run: forge test -vvv
+
+  # ── Agent node: syntax check every source file ──────────────────────────────
+  agent:
+    needs: changes
+    if: needs.changes.outputs.agent == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent-node
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: agent-node/package-lock.json
+      - run: npm ci
+      - name: node --check all sources
+        run: find src -name '*.js' -print0 | xargs -0 -n1 node --check
+
+  # ── Frontend: lint + build ──────────────────────────────────────────────────
+  frontend:
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: build
+        run: npm run build
