@@ -362,8 +362,6 @@ export default function StreamDetail() {
   const isActive     = streamValidUntil > 0n && now < streamValidUntil;
   const isPending    = !isActive && (totalDeposited ?? 0n) > 0n && (streamValidUntil === 0n || streamValidUntil <= startTime);
   const duration     = streamValidUntil > startTime ? streamValidUntil - startTime : 0n;
-  const elapsed      = isActive ? now - startTime : duration;
-  const progressPct  = isPending ? 0 : duration > 0n ? Math.min(Number((elapsed * 100n) / duration), 100) : 100;
   const tokenLabel   = TOKEN_LABELS[token] ?? short(token);
   const ratePerDay   = parseFloat(formatUnits(ratePerSecond ?? 0n, 6)) * 86400;
 
@@ -397,6 +395,18 @@ export default function StreamDetail() {
     ? totalDeposited - (resolvedBalance + (totalWithdrawn ?? 0n))
     : 0n;
   const hasUnearned = unearned > 0n;
+
+  // Amount actually streamed to the contractor so far (claimable + already withdrawn).
+  const streamedAmount = (resolvedBalance ?? 0n) + (totalWithdrawn ?? 0n);
+  // Progress = share of the total budget earned, NOT time within the current funded
+  // window. In the micro-extension model the window resets on every verified PR, so
+  // budget-streamed is the only meaningful measure of overall engagement.
+  const progressPct = (totalDeposited ?? 0n) > 0n
+    ? Math.min(Number((streamedAmount * 10000n) / totalDeposited) / 100, 100)
+    : 0;
+  // Frozen but revivable: window lapsed, budget remains, not yet reclaimed. A new
+  // verified deliverable re-extends it — so it's "Paused", not "Ended".
+  const isPaused = !isActive && !isPending && hasUnearned;
 
   /** Parse a wagmi/viem error into a human-readable one-liner. */
   function txErrorMessage(err) {
@@ -478,6 +488,8 @@ export default function StreamDetail() {
             ? <span className="badge-active"><span className="w-1.5 h-1.5 rounded-full bg-accent pulse-dot" />Active</span>
             : isPending
             ? <span className="inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full border border-yellow-500/30 text-yellow-400/80 bg-yellow-500/5"><span className="w-1.5 h-1.5 rounded-full bg-yellow-400/60 animate-pulse" />Pending verification</span>
+            : isPaused
+            ? <span className="inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full border border-sky-500/30 text-sky-400/80 bg-sky-500/5"><span className="w-1.5 h-1.5 rounded-full bg-sky-400/70" />Paused</span>
             : <span className="badge-expired">Ended</span>
           }
           <button
@@ -673,11 +685,19 @@ export default function StreamDetail() {
                   className="progress-fill"
                   style={{
                     width: `${progressPct}%`,
-                    background: isActive ? '#00D4AA' : '#6B7280',
+                    background: isActive ? '#00D4AA' : isPaused ? '#38BDF8' : '#6B7280',
                     transition: 'width 1s ease',
                   }}
                 />
               </div>
+              <div className="text-[11px] text-muted/60 font-mono mt-2">
+                {parseFloat(formatUnits(streamedAmount, 6)).toFixed(2)} / {parseFloat(formatUnits(totalDeposited ?? 0n, 6)).toFixed(2)} {tokenLabel} streamed
+              </div>
+              {isPaused && (
+                <p className="text-[11px] text-sky-400/70 font-mono mt-1">
+                  Paused — awaiting next verified deliverable. A new merged PR resumes this stream.
+                </p>
+              )}
               {/* Timestamps - pending shows only created date, active/ended shows start + end */}
               {isPending ? (
                 <div className="text-xs text-muted/50 mt-2 font-mono">
