@@ -129,7 +129,14 @@ export function useProfile(address) {
   // ── Save to server + caches ──────────────────────────────────────────────
   const saveProfile = useCallback(async (data, { authFetch } = {}) => {
     if (!address) return;
-    const _fetch = authFetch ?? fetch;
+    // The POST /api/v1/profile route requires a JWT. Falling back to an
+    // unauthenticated `fetch` silently 401s and drops the save (see the Setup
+    // onboarding bug), so require an authenticated fetch up front.
+    if (typeof authFetch !== 'function') {
+      console.error('[useProfile] saveProfile called without authFetch — refusing to POST unauthenticated. Pass { authFetch } from useAuth().');
+      return { ok: false, error: 'Not authenticated. Reconnect your wallet and try again.' };
+    }
+    const _fetch = authFetch;
 
     const payload = {
       address,

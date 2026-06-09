@@ -3,11 +3,17 @@
 # ship.sh — turn the current working changes into a merged PR in one command.
 #
 #   ./ship.sh "what I shipped"
+#   ./ship.sh "what I shipped" 0x<stream-id>   # route the extension to a specific stream
 #
 # Flow: branch off main → commit all changes → push → open PR → enable
 # auto-merge. CI runs on the PR; once it passes (and any branch-protection
 # rules are satisfied) GitHub merges automatically, which fires the CronStream
 # webhook and extends the stream.
+#
+# Pass a stream id as the 2nd argument to embed a
+#   CronStream-Stream-Id: 0x…
+# line in the PR body, which routes the verified extension to that exact stream
+# (useful when several streams watch the same repo).
 #
 # Requirements:
 #   - git remote 'origin' points at the repo
@@ -17,8 +23,13 @@
 set -euo pipefail
 
 MSG="${1:-}"
+STREAM_ID="${2:-}"
 if [ -z "$MSG" ]; then
-  echo "Usage: ./ship.sh \"commit message\"" >&2
+  echo "Usage: ./ship.sh \"commit message\" [0x<stream-id>]" >&2
+  exit 1
+fi
+if [ -n "$STREAM_ID" ] && ! [[ "$STREAM_ID" =~ ^0x[a-fA-F0-9]{64}$ ]]; then
+  echo "✗ Stream id must be 0x followed by 64 hex chars." >&2
   exit 1
 fi
 
@@ -49,7 +60,13 @@ echo "→ Pushing"
 git push -u origin "$BRANCH" --quiet
 
 echo "→ Opening PR"
-gh pr create --base "$DEFAULT_BRANCH" --head "$BRANCH" --title "$MSG" --fill
+if [ -n "$STREAM_ID" ]; then
+  gh pr create --base "$DEFAULT_BRANCH" --head "$BRANCH" --title "$MSG" \
+    --body "$MSG"$'\n\n'"CronStream-Stream-Id: $STREAM_ID"
+  echo "  ↳ routing extension to stream $STREAM_ID"
+else
+  gh pr create --base "$DEFAULT_BRANCH" --head "$BRANCH" --title "$MSG" --fill
+fi
 
 echo "→ Enabling auto-merge"
 # --auto merges as soon as required checks/reviews pass. If auto-merge isn't

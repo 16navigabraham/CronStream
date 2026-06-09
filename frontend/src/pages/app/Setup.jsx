@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAccount } from 'wagmi';
 import { useProfile } from '../../hooks/useProfile';
+import { useAuth } from '../../context/AuthContext';
 
 const AGENT_URL = import.meta.env.VITE_AGENT_URL ?? 'http://localhost:3000';
 
@@ -62,6 +63,7 @@ export default function Setup() {
   const navigate = useNavigate();
   const { address } = useAccount();
   const { saveProfile, profile, synced } = useProfile(address);
+  const { authFetch, isAuthed, signing, signIn, signError } = useAuth();
 
   const [role,    setRole]    = useState(null);
   const [loading, setLoading] = useState(false);
@@ -87,7 +89,7 @@ export default function Setup() {
     if (role === 'contractor' && !form.github.trim()) return;
     setLoading(true);
     setError(null);
-    const result = await saveProfile({ role, ...form });
+    const result = await saveProfile({ role, ...form }, { authFetch });
     setLoading(false);
     if (!result?.ok) {
       setError(result?.error ?? 'Something went wrong. Please try again.');
@@ -103,6 +105,42 @@ export default function Setup() {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  // Require a wallet signature (SIWE) BEFORE the onboarding form. Saving the
+  // profile needs an authenticated session; gating here means the user can never
+  // fill the form only to have the save rejected for lack of a signature.
+  if (!isAuthed) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4 sm:p-6">
+        <div className="max-w-md w-full">
+          <div className="flex items-center gap-2 mb-6">
+            <div className="w-6 h-6 rounded-md bg-accent/10 border border-accent/20 flex items-center justify-center">
+              <span className="text-accent text-xs font-mono font-bold">C</span>
+            </div>
+            <span className="text-accent font-mono font-semibold text-sm">CronStream</span>
+          </div>
+          <div className="card flex flex-col gap-4 text-center py-8">
+            <h1 className="text-xl font-bold">Verify your wallet</h1>
+            <p className="text-muted text-sm leading-relaxed max-w-xs mx-auto">
+              Sign a message to prove you own this wallet. It is free, off-chain, and uses no gas.
+              You only do this once to start onboarding.
+            </p>
+            <button
+              type="button"
+              onClick={signIn}
+              disabled={signing}
+              className="btn-primary w-full mt-2 disabled:opacity-50"
+            >
+              {signing ? 'Check your wallet…' : 'Sign to continue'}
+            </button>
+            {signError && (
+              <p className="text-xs text-red-400 font-mono">{signError}</p>
+            )}
+          </div>
+        </div>
       </div>
     );
   }
